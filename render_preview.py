@@ -37,7 +37,7 @@ if __name__=="__main__":
     b=trimesh.load("out/case_base.stl"); l=trimesh.load("out/case_lid.stl")
     tiles=[(render(b,35,-35),"Base: right side (ports)"),
            (render(b,35,215,base=(80,130,210)),"Base: left side (SATA cutout)"),
-           (render(b,89.9,0),"Base: top view"),
+           (render(b,30,150),"Base: back wall (fan exhaust)"),
            (render(l,35,-35,base=(215,150,70)),"Lid (print orientation)")]
     W,H=tiles[0][0].size; sheet=Image.new("RGB",(W*2,H*2+0),"white"); d=ImageDraw.Draw(sheet)
     for i,(im,t) in enumerate(tiles):

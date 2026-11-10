@@ -53,8 +53,17 @@ LEFT_PORTS_PX = [
     ("SATA/HDD connector", 690, 790, 8.0),
 ]
 
-# Vent area above CPU/heatsink (x0, y0, x1, y1) in photo pixels
-VENT_AREA_PX = (340, 380, 700, 690)
+# Fan exhaust: the blower sits at the back-left over the heat shield and blows
+# towards the back edge (top of the photo). (name, x_left_px, x_right_px, height_mm)
+BACK_VENTS_PX = [
+    ("fan exhaust", 345, 550, 9.0),
+]
+
+# Lid vents: (x0, y0, x1, y1, slot_w_mm, pitch_mm) in photo pixels
+VENT_AREAS_PX = [
+    (340, 300, 548, 600, 3.0, 5.0),   # fan intake (blower draws air from the lid)
+    (548, 380, 700, 690, 2.0, 4.0),   # heatsink / heat-pipe area
+]
 
 
 BUILD_VOLUME = (256, 256, 256)   # Elegoo Centauri Carbon 2 (mm); edit for other printers
@@ -150,6 +159,16 @@ def main():
         cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
+    # back wall exhaust slots (fan blows out towards the screen hinge)
+    for name, xa, xb, hh in BACK_VENTS_PX:
+        slot_w, pitch = 3.5, 5.5
+        x0v, x1v = px(xa, 0)[0], px(xb, 0)[0]
+        x = x0v
+        while x + slot_w <= x1v:
+            cut = box(x, iy1 - 1, z_pcb_bot + 1.0, x + slot_w, oy1 + 1, z_pcb_top + hh)
+            body = body.difference(cut, engine="manifold")
+            x += pitch
+
     # left wall cut-outs (SATA connector)
     for name, ya, yb, hh in LEFT_PORTS_PX:
         y_hi = px(0, ya)[1] + m
@@ -172,14 +191,14 @@ def main():
         lid = lid.difference(hole, engine="manifold")
 
     if not a.no_vents:
-        vx0, vy0 = px(VENT_AREA_PX[0], VENT_AREA_PX[3])
-        vx1, vy1 = px(VENT_AREA_PX[2], VENT_AREA_PX[1])
-        slot_w, pitch = 2.0, 4.0
-        x = vx0
-        while x + slot_w <= vx1:
-            lid = lid.difference(box(x, vy0, -1, x + slot_w, vy1, a.lid + lip_h + 1),
-                                 engine="manifold")
-            x += pitch
+        for ax0, ay0, ax1, ay1, slot_w, pitch in VENT_AREAS_PX:
+            vx0, vy0 = px(ax0, ay1)
+            vx1, vy1 = px(ax1, ay0)
+            x = vx0
+            while x + slot_w <= vx1:
+                lid = lid.difference(box(x, vy0, -1, x + slot_w, vy1, a.lid + lip_h + 1),
+                                     engine="manifold")
+                x += pitch
 
     # print orientation: lid upside down (flat face on the bed)
     lid.apply_transform(transformations.rotation_matrix(np.pi, [1, 0, 0]))
