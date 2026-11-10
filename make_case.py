@@ -35,7 +35,7 @@ MOUNT_HOLES_PX = [
     (370, 242), (455, 247), (793, 308), (905, 458),
     (821, 309), (103, 595), (238, 635), (150, 697), (85, 767),
     (383, 768), (417, 716), (588, 719),
-    (952, 764),   # bottom-right corner tab
+    (961, 773),   # bottom-right corner tab
 ]
 
 # Rear-panel I/O on the right edge: (name, y_top_px, y_bottom_px, height_mm)
