@@ -89,6 +89,54 @@ def union(parts):
     return trimesh.boolean.union(parts, engine="manifold")
 
 
+RIB_W, RIB_PITCH, RIB_OUT = 2.4, 5.0, 1.2     # wall fluting (mm)
+
+
+def lid_deco(ox0, oy0, ox1, oy1, W, H, px):
+    """Engraved Art Deco pattern for the lid's outer face (z=0 is the outer face,
+    so every groove is open to the print bed: no supports, only short bridges)."""
+    d = 0.8
+    cut = []
+    # stepped frame: two concentric outlines with notched (ziggurat) corners
+    for inset in (5.0, 8.0):
+        x0, y0, x1, y1 = ox0 + inset, oy0 + inset, ox1 - inset, oy1 - inset
+        n = 6.0   # corner notch size
+        pts = [(x0 + n, y0), (x1 - n, y0), (x1 - n, y0 + n / 2), (x1, y0 + n / 2), (x1, y1 - n / 2),
+               (x1 - n, y1 - n / 2), (x1 - n, y1), (x0 + n, y1), (x0 + n, y1 - n / 2),
+               (x0, y1 - n / 2), (x0, y0 + n / 2), (x0 + n, y0 + n / 2)]
+        w = 1.0
+        for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+            cut.append(box(min(ax, bx) - w / 2, min(ay, by) - w / 2, -1,
+                           max(ax, bx) + w / 2, max(ay, by) + w / 2, d))
+    # fluted columns either side of the vents
+    fw, fp = 1.6, 3.2
+    vx0 = px(VENT_AREAS_PX[0][0], 0)[0] - 6
+    vx1 = px(VENT_AREAS_PX[-1][2], 0)[0] + 6
+    ylo, yhi = oy0 + 12, oy1 - 12
+    x = ox0 + 12
+    while x + fw <= vx0:
+        cut.append(box(x, ylo, -1, x + fw, yhi, d)); x += fp
+    # recessed plaque + sunburst on the right
+    pw, ph = 46.0, 30.0
+    pcx, pcy = (vx1 + (ox1 - 12)) / 2, H / 2
+    px0, py0, px1, py1 = pcx - pw / 2, pcy - ph / 2, pcx + pw / 2, pcy + ph / 2
+    cut.append(box(px0, py0, -1, px1, py1, d))
+    x = vx1
+    while x + fw <= ox1 - 12:
+        if not (px0 - 3 < x + fw and x < px1 + 3):
+            pass
+        cut.append(box(x, ylo, -1, x + fw, py0 - 4, d))
+        cut.append(box(x, py1 + 4, -1, x + fw, yhi, d))
+        x += fp
+    inner = box(px0 + 2, py0 + 2, -1, px1 - 2, py1 - 2, d + 0.8)
+    for ang in range(-60, 61, 20):
+        ray = box(-0.5, 0, -1, 0.5, 40.0, d + 0.8)
+        ray.apply_transform(transformations.rotation_matrix(np.radians(ang), [0, 0, 1]))
+        ray.apply_translation([pcx, py0 + 2, 0])
+        cut.append(ray.intersection(inner, engine="manifold"))
+    return union(cut)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -110,6 +158,7 @@ def main():
     ap.add_argument("--screw-d", type=float, default=3.2, help="lid screw clearance dia (mm)")
     ap.add_argument("--pilot-d", type=float, default=2.6, help="base ear pilot dia for M3 (mm)")
     ap.add_argument("--no-vents", action="store_true")
+    ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
     ap.add_argument("--only", choices=["base", "lid"], help="write just one part")
     ap.add_argument("--out", default="out", help="output directory")
@@ -136,9 +185,38 @@ def main():
     ear_centres = [(ox0, oy0), (ox1, oy0), (ox0, oy1), (ox1, oy1)]
 
     # ---------------------------------------------------------------- base
+    deco = not a.no_deco
     shell = box(ox0, oy0, 0, ox1, oy1, z_top)
     ears = [tube(ear_r, 0, z_top, c) for c in ear_centres]
-    body = union([shell] + ears)
+    extras = []
+    if deco:
+        # ziggurat foot: two stepped tiers like the radio's stacked base bands
+        t1, t2 = 2 * RIB_OUT, RIB_OUT
+        extras.append(box(ox0 - t1, oy0 - t1, 0, ox1 + t1, oy1 + t1, 1.2))
+        extras.append(box(ox0 - t2, oy0 - t2, 1.2, ox1 + t2, oy1 + t2, 2.4))
+        # vertical fluting on all four walls, stopping short of the rim
+        zr0, zr1 = 2.4, z_top - 2.0
+        lo = ear_r + 3
+        def hit(v, spans):
+            return any(v + RIB_W > lo_ and v < hi_ for lo_, hi_ in spans)
+        k = 1.5   # keep ribs this far from any opening
+        right_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in RIGHT_PORTS_PX]
+        left_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in LEFT_PORTS_PX]
+        back_skip = [(px(xa, 0)[0] - k, px(xb, 0)[0] + k) for _, xa, xb, _ in BACK_VENTS_PX]
+        x = ox0 + lo
+        while x + RIB_W <= ox1 - lo:
+            extras.append(box(x, oy0 - RIB_OUT, zr0, x + RIB_W, oy0 + 0.5, zr1))
+            if not hit(x, back_skip):
+                extras.append(box(x, oy1 - 0.5, zr0, x + RIB_W, oy1 + RIB_OUT, zr1))
+            x += RIB_PITCH
+        y = oy0 + lo
+        while y + RIB_W <= oy1 - lo:
+            if not hit(y, left_skip):
+                extras.append(box(ox0 - RIB_OUT, y, zr0, ox0 + 0.5, y + RIB_W, zr1))
+            if not hit(y, right_skip):
+                extras.append(box(ox1 - 0.5, y, zr0, ox1 + RIB_OUT, y + RIB_W, zr1))
+            y += RIB_PITCH
+    body = union([shell] + ears + extras)
     body = body.difference(box(ix0, iy0, a.floor, ix1, iy1, z_top + 1), engine="manifold")
 
     standoffs = [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5,
@@ -156,7 +234,7 @@ def main():
     for name, ya, yb, hh in RIGHT_PORTS_PX:
         y_hi = px(0, ya)[1] + m
         y_lo = px(0, yb)[1] - m
-        cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, z_pcb_top + hh + m)
+        cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 6, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
     # back wall exhaust slots (fan blows out towards the screen hinge)
@@ -165,7 +243,7 @@ def main():
         x0v, x1v = px(xa, 0)[0], px(xb, 0)[0]
         x = x0v
         while x + slot_w <= x1v:
-            cut = box(x, iy1 - 1, z_pcb_bot + 1.0, x + slot_w, oy1 + 1, z_pcb_top + hh)
+            cut = box(x, iy1 - 1, z_pcb_bot + 1.0, x + slot_w, oy1 + 6, z_pcb_top + hh)
             body = body.difference(cut, engine="manifold")
             x += pitch
 
@@ -173,7 +251,7 @@ def main():
     for name, ya, yb, hh in LEFT_PORTS_PX:
         y_hi = px(0, ya)[1] + m
         y_lo = px(0, yb)[1] - m
-        cut = box(ox0 - 1, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
+        cut = box(ox0 - 6, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
     # ---------------------------------------------------------------- lid
@@ -200,9 +278,10 @@ def main():
                                      engine="manifold")
                 x += pitch
 
-    # print orientation: lid upside down (flat face on the bed)
-    lid.apply_transform(transformations.rotation_matrix(np.pi, [1, 0, 0]))
-    lid.apply_translation([0, 0, a.lid + lip_h])
+    if deco:
+        lid = lid.difference(lid_deco(ox0, oy0, ox1, oy1, W, H, px), engine="manifold")
+    # NOTE: the lid is exported plate-down (outer face on z=0, lip pointing up),
+    # which is the print orientation: no supports needed.
 
     # ---------------------------------------------------------------- write
     os.makedirs(a.out, exist_ok=True)

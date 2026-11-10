@@ -35,10 +35,12 @@ def render(m, elev, azim, W=900, H=600, base=(80,130,210), zoom_center=None, zoo
 if __name__=="__main__":
     out="model_preview.png"
     b=trimesh.load("out/case_base.stl"); l=trimesh.load("out/case_lid.stl")
+    l.apply_transform(trimesh.transformations.rotation_matrix(np.pi,[1,0,0])); l.apply_translation([0,0,-l.bounds[0][2]])  # show outer face up
     tiles=[(render(b,35,-35),"Base: right side (ports)"),
            (render(b,35,215,base=(80,130,210)),"Base: left side (SATA cutout)"),
            (render(b,30,150),"Base: back wall (fan exhaust)"),
-           (render(l,35,-35,base=(215,150,70)),"Lid (print orientation)")]
+           (render(l,35,-35,base=(215,150,70)),"Lid: outer face (prints face-down)")]
+    tiles[2]=(render(b,28,150,zoom=2.6,zoom_center=[190,125,8]),"Base: back-right corner close-up")
     W,H=tiles[0][0].size; sheet=Image.new("RGB",(W*2,H*2+0),"white"); d=ImageDraw.Draw(sheet)
     for i,(im,t) in enumerate(tiles):
         sheet.paste(im,((i%2)*W,(i//2)*H)); d.text(((i%2)*W+10,(i//2)*H+8),t,fill=(0,0,0))
