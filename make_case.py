@@ -33,7 +33,7 @@ PX_Y0, PX_Y1 = 233, 795     # top / bottom edge of PCB in the photo
 # Delete/add entries to match your board. (Heatsink/fan screws are omitted.)
 MOUNT_HOLES_PX = [
     (370, 242), (455, 247), (793, 308), (905, 458),
-    (103, 595), (238, 635), (150, 697), (85, 767),
+    (821, 309), (103, 595), (238, 635), (150, 697), (85, 767),
     (383, 768), (417, 716), (588, 719),
 ]
 
@@ -53,16 +53,16 @@ LEFT_PORTS_PX = [
     ("SATA/HDD connector", 690, 790, 8.0),
 ]
 
-# Fan exhaust: the blower sits at the back-left over the heat shield and blows
-# towards the back edge (top of the photo). (name, x_left_px, x_right_px, height_mm)
+# Fan exhaust: the blower sits in the L-shaped notch at the top-left of the PCB
+# (confirmed from the teardown photo) and blows towards the back edge (top of photo). (name, x_left_px, x_right_px, height_mm)
 BACK_VENTS_PX = [
-    ("fan exhaust", 345, 550, 9.0),
+    ("fan exhaust", 80, 352, 10.0),
 ]
 
 # Lid vents: (x0, y0, x1, y1, slot_w_mm, pitch_mm) in photo pixels
 VENT_AREAS_PX = [
-    (340, 300, 548, 600, 3.0, 5.0),   # fan intake (blower draws air from the lid)
-    (548, 380, 700, 690, 2.0, 4.0),   # heatsink / heat-pipe area
+    (105, 385, 285, 555, 3.0, 5.0),   # fan intake (blower sits in the PCB's L-notch)
+    (335, 380, 700, 690, 2.0, 4.0),   # heatsink / heat-pipe area
 ]
 
 
@@ -108,25 +108,31 @@ def lid_deco(ox0, oy0, ox1, oy1, W, H, px):
         for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
             cut.append(box(min(ax, bx) - w / 2, min(ay, by) - w / 2, -1,
                            max(ax, bx) + w / 2, max(ay, by) + w / 2, d))
-    # fluted columns either side of the vents
-    fw, fp = 1.6, 3.2
-    vx0 = px(VENT_AREAS_PX[0][0], 0)[0] - 6
-    vx1 = px(VENT_AREAS_PX[-1][2], 0)[0] + 6
+    # recessed plaque (right-hand free area)
+    fw, fp, guard = 1.6, 3.2, 4.0
+    blocked_rects = []
+    for ax0, ay0, ax1, ay1, *_ in VENT_AREAS_PX:
+        (bx0, by0), (bx1, by1) = px(ax0, ay1), px(ax1, ay0)
+        blocked_rects.append((bx0, by0, bx1, by1))
+    vx_end = max(r[2] for r in blocked_rects) + 6
     ylo, yhi = oy0 + 12, oy1 - 12
-    x = ox0 + 12
-    while x + fw <= vx0:
-        cut.append(box(x, ylo, -1, x + fw, yhi, d)); x += fp
-    # recessed plaque + sunburst on the right
-    pw, ph = 46.0, 30.0
-    pcx, pcy = (vx1 + (ox1 - 12)) / 2, H / 2
+    pw, ph = 40.0, 30.0
+    pcx, pcy = (vx_end + (ox1 - 12)) / 2, H / 2
     px0, py0, px1, py1 = pcx - pw / 2, pcy - ph / 2, pcx + pw / 2, pcy + ph / 2
     cut.append(box(px0, py0, -1, px1, py1, d))
-    x = vx1
+    blocked_rects.append((px0, py0, px1, py1))
+    # fluted columns everywhere the lid is free of vents / plaque
+    x = ox0 + 12
     while x + fw <= ox1 - 12:
-        if not (px0 - 3 < x + fw and x < px1 + 3):
-            pass
-        cut.append(box(x, ylo, -1, x + fw, py0 - 4, d))
-        cut.append(box(x, py1 + 4, -1, x + fw, yhi, d))
+        spans = sorted((r[1] - guard, r[3] + guard) for r in blocked_rects
+                       if r[0] - guard < x + fw and x < r[2] + guard)
+        seg = ylo
+        for b0, b1 in spans:
+            if b0 - seg >= 8:
+                cut.append(box(x, seg, -1, x + fw, b0, d))
+            seg = max(seg, b1)
+        if yhi - seg >= 8:
+            cut.append(box(x, seg, -1, x + fw, yhi, d))
         x += fp
     inner = box(px0 + 2, py0 + 2, -1, px1 - 2, py1 - 2, d + 0.8)
     for ang in range(-60, 61, 20):
