@@ -48,6 +48,11 @@ RIGHT_PORTS_PX = [
     ("audio jack",          685, 732, 7.0),
 ]
 
+# Left-edge connectors: (name, y_top_px, y_bottom_px, height_mm)
+LEFT_PORTS_PX = [
+    ("SATA/HDD connector", 690, 790, 8.0),
+]
+
 # Vent area above CPU/heatsink (x0, y0, x1, y1) in photo pixels
 VENT_AREA_PX = (340, 380, 700, 690)
 
@@ -143,6 +148,13 @@ def main():
         y_hi = px(0, ya)[1] + m
         y_lo = px(0, yb)[1] - m
         cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, z_pcb_top + hh + m)
+        body = body.difference(cut, engine="manifold")
+
+    # left wall cut-outs (SATA connector)
+    for name, ya, yb, hh in LEFT_PORTS_PX:
+        y_hi = px(0, ya)[1] + m
+        y_lo = px(0, yb)[1] - m
+        cut = box(ox0 - 1, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
     # ---------------------------------------------------------------- lid
