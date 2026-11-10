@@ -163,7 +163,8 @@ def main():
     ap.add_argument("--dc-jack-d", type=float, default=None, help="DC jack hole dia (mm) [11.5]")
     ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
-    ap.add_argument("--only", choices=["base", "lid"], help="write just one part")
+    ap.add_argument("--only", choices=["base", "lid", "plate"],
+                    help="write just one part; 'plate' = standoff test-fit plate")
     ap.add_argument("--out", default="out", help="output directory")
     a = ap.parse_args()
     if a.dc_jack_d:
@@ -324,9 +325,16 @@ def main():
     # ---------------------------------------------------------------- write
     os.makedirs(a.out, exist_ok=True)
     parts = {}
-    if a.only != "lid":
+    if a.only in (None, "plate"):
+        # quick test-fit: flat plate + the same standoffs, no walls
+        mg = 4.0
+        plate = union([box(-mg, -mg, 0, W + mg, H + mg, a.floor)] +
+                      [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
+                       for p in MOUNT_HOLES_PX])
+        parts["test_standoff_plate.stl"] = plate
+    if a.only in (None, "base"):
         parts["case_base.stl"] = body
-    if a.only != "base":
+    if a.only in (None, "lid"):
         parts["case_lid.stl"] = lid
     if a.ghost:
         g = [box(0, 0, z_pcb_bot, W, H, z_pcb_top)]
