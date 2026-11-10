@@ -40,13 +40,17 @@ MOUNT_HOLES_PX = [
 # Rear-panel I/O on the right edge: (name, y_top_px, y_bottom_px, height_mm)
 # height_mm = how far the connector rises above the PCB surface.
 RIGHT_PORTS_PX = [
-    ("power/top connector", 285, 347, 8.0),
     ("HDMI",                395, 462, 7.0),
     ("USB-1",               475, 532, 7.5),
     ("USB-2",               548, 606, 7.5),
     ("USB-3",               620, 680, 7.5),
     ("audio jack",          685, 732, 7.0),
 ]
+
+# Detached DC power jack: the board only has a cable header at the top right;
+# the jack itself screws into the wall. Round hole in the right wall.
+# (y_top_px: height along the edge, d_mm: hole dia, z_mm: centre above PCB top)
+DC_JACK = {"y_px": 318, "d_mm": 11.5, "z_mm": 5.0}
 
 # Left-edge connectors: (name, y_top_px, y_bottom_px, height_mm)
 LEFT_PORTS_PX = [
@@ -90,55 +94,47 @@ def union(parts):
 
 
 RIB_W, RIB_PITCH, RIB_OUT = 2.4, 5.0, 1.2     # wall fluting (mm)
+FOOT_H = 1.6                                  # height of each foot tier (mm)
+STEP = 3.0                                    # height of each lid crown step (mm)
 
 
-def lid_deco(ox0, oy0, ox1, oy1, W, H, px):
-    """Engraved Art Deco pattern for the lid's outer face (z=0 is the outer face,
-    so every groove is open to the print bed: no supports, only short bridges)."""
+def lid_deco(ox0, oy0, ox1, oy1, H, px, top, stepA):
+    """Engraved pattern for the lid shoulder (its top face is at z=top):
+    fluted columns wherever it is free, plus a recessed sunburst plaque."""
     d = 0.8
+    z0, z1 = top - d, top + 1
     cut = []
-    # stepped frame: two concentric outlines with notched (ziggurat) corners
-    for inset in (5.0, 8.0):
-        x0, y0, x1, y1 = ox0 + inset, oy0 + inset, ox1 - inset, oy1 - inset
-        n = 6.0   # corner notch size
-        pts = [(x0 + n, y0), (x1 - n, y0), (x1 - n, y0 + n / 2), (x1, y0 + n / 2), (x1, y1 - n / 2),
-               (x1 - n, y1 - n / 2), (x1 - n, y1), (x0 + n, y1), (x0 + n, y1 - n / 2),
-               (x0, y1 - n / 2), (x0, y0 + n / 2), (x0 + n, y0 + n / 2)]
-        w = 1.0
-        for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
-            cut.append(box(min(ax, bx) - w / 2, min(ay, by) - w / 2, -1,
-                           max(ax, bx) + w / 2, max(ay, by) + w / 2, d))
-    # recessed plaque (right-hand free area)
     fw, fp, guard = 1.6, 3.2, 4.0
-    blocked_rects = []
+    blocked = []                                       # (x0, y0, x1, y1) mm
     for ax0, ay0, ax1, ay1, *_ in VENT_AREAS_PX:
         (bx0, by0), (bx1, by1) = px(ax0, ay1), px(ax1, ay0)
-        blocked_rects.append((bx0, by0, bx1, by1))
-    vx_end = max(r[2] for r in blocked_rects) + 6
-    ylo, yhi = oy0 + 12, oy1 - 12
-    pw, ph = 40.0, 30.0
-    pcx, pcy = (vx_end + (ox1 - 12)) / 2, H / 2
-    px0, py0, px1, py1 = pcx - pw / 2, pcy - ph / 2, pcx + pw / 2, pcy + ph / 2
-    cut.append(box(px0, py0, -1, px1, py1, d))
-    blocked_rects.append((px0, py0, px1, py1))
-    # fluted columns everywhere the lid is free of vents / plaque
-    x = ox0 + 12
-    while x + fw <= ox1 - 12:
-        spans = sorted((r[1] - guard, r[3] + guard) for r in blocked_rects
+        blocked.append((bx0, by0, bx1, by1))
+    blocked.append(stepA)
+    # recessed plaque to the right of the crown
+    pw, ph = 30.0, 26.0
+    pcx, pcy = (stepA[2] + (ox1 - 7)) / 2, H / 2
+    qx0, qy0, qx1, qy1 = pcx - pw / 2, pcy - ph / 2, pcx + pw / 2, pcy + ph / 2
+    cut.append(box(qx0, qy0, z0, qx1, qy1, z1))
+    blocked.append((qx0, qy0, qx1, qy1))
+    ylo, yhi = oy0 + 10, oy1 - 10
+    x = ox0 + 10
+    while x + fw <= ox1 - 10:
+        spans = sorted((r[1] - guard, r[3] + guard) for r in blocked
                        if r[0] - guard < x + fw and x < r[2] + guard)
         seg = ylo
         for b0, b1 in spans:
             if b0 - seg >= 8:
-                cut.append(box(x, seg, -1, x + fw, b0, d))
+                cut.append(box(x, seg, z0, x + fw, b0, z1))
             seg = max(seg, b1)
         if yhi - seg >= 8:
-            cut.append(box(x, seg, -1, x + fw, yhi, d))
+            cut.append(box(x, seg, z0, x + fw, yhi, z1))
         x += fp
-    inner = box(px0 + 2, py0 + 2, -1, px1 - 2, py1 - 2, d + 0.8)
+    # sunburst inside the plaque
+    inner = box(qx0 + 2, qy0 + 2, z0 - 1, qx1 - 2, qy1 - 2, z1)
     for ang in range(-60, 61, 20):
-        ray = box(-0.5, 0, -1, 0.5, 40.0, d + 0.8)
+        ray = box(-0.5, 0, z0 - d, 0.5, 40.0, z1)
         ray.apply_transform(transformations.rotation_matrix(np.radians(ang), [0, 0, 1]))
-        ray.apply_translation([pcx, py0 + 2, 0])
+        ray.apply_translation([pcx, qy0 + 2, 0])
         cut.append(ray.intersection(inner, engine="manifold"))
     return union(cut)
 
@@ -164,11 +160,14 @@ def main():
     ap.add_argument("--screw-d", type=float, default=3.2, help="lid screw clearance dia (mm)")
     ap.add_argument("--pilot-d", type=float, default=2.6, help="base ear pilot dia for M3 (mm)")
     ap.add_argument("--no-vents", action="store_true")
+    ap.add_argument("--dc-jack-d", type=float, default=None, help="DC jack hole dia (mm) [11.5]")
     ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
     ap.add_argument("--only", choices=["base", "lid"], help="write just one part")
     ap.add_argument("--out", default="out", help="output directory")
     a = ap.parse_args()
+    if a.dc_jack_d:
+        DC_JACK["d_mm"] = a.dc_jack_d
 
     sx = a.board_width / (PX_X1 - PX_X0)
     W = a.board_width
@@ -197,16 +196,18 @@ def main():
     extras = []
     if deco:
         # ziggurat foot: two stepped tiers like the radio's stacked base bands
-        t1, t2 = 2 * RIB_OUT, RIB_OUT
-        extras.append(box(ox0 - t1, oy0 - t1, 0, ox1 + t1, oy1 + t1, 1.2))
-        extras.append(box(ox0 - t2, oy0 - t2, 1.2, ox1 + t2, oy1 + t2, 2.4))
+        for i in range(3):      # 3 tiers, widest at the bed (prints without supports)
+            o = (3 - i) * RIB_OUT
+            extras.append(box(ox0 - o, oy0 - o, i * FOOT_H, ox1 + o, oy1 + o, (i + 1) * FOOT_H))
         # vertical fluting on all four walls, stopping short of the rim
-        zr0, zr1 = 2.4, z_top - 2.0
+        zr0, zr1 = 3 * FOOT_H, z_top - 2.0
         lo = ear_r + 3
         def hit(v, spans):
             return any(v + RIB_W > lo_ and v < hi_ for lo_, hi_ in spans)
         k = 1.5   # keep ribs this far from any opening
         right_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in RIGHT_PORTS_PX]
+        jy = px(0, DC_JACK['y_px'])[1]
+        right_skip.append((jy - DC_JACK['d_mm'] / 2 - k, jy + DC_JACK['d_mm'] / 2 + k))
         left_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in LEFT_PORTS_PX]
         back_skip = [(px(xa, 0)[0] - k, px(xb, 0)[0] + k) for _, xa, xb, _ in BACK_VENTS_PX]
         x = ox0 + lo
@@ -260,18 +261,49 @@ def main():
         cut = box(ox0 - 6, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
+    # DC jack hole in the right wall
+    jy = px(0, DC_JACK["y_px"])[1]
+    hole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=ox1 - ix1 + 8, sections=48)
+    hole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+    hole.apply_translation([(ix1 - 1 + ox1 + 6) / 2, jy, z_pcb_top + DC_JACK["z_mm"]])
+    body = body.difference(hole, engine="manifold")
+
+    # locating tongue on the inner half of the wall top
+    tongue_h, tg = 2.0, 0.25
+    tongue = box(ix0 - 1.2, iy0 - 1.2, z_top - 0.01, ix1 + 1.2, iy1 + 1.2, z_top + tongue_h).difference(
+        box(ix0, iy0, z_top - 1, ix1, iy1, z_top + tongue_h + 1), engine="manifold")
+    body = union([body, tongue])
+
     # ---------------------------------------------------------------- lid
-    lid_plate = union([box(ox0, oy0, 0, ox1, oy1, a.lid)] +
-                      [tube(ear_r, 0, a.lid, c) for c in ear_centres])
-    lip_t, lip_h, tol = 1.6, 2.5, 0.35
-    lip_outer = box(ix0 + tol, iy0 + tol, a.lid - 0.01, ix1 - tol, iy1 - tol, a.lid + lip_h)
-    lip_inner = box(ix0 + tol + lip_t, iy0 + tol + lip_t, a.lid - 1,
-                    ix1 - tol - lip_t, iy1 - tol - lip_t, a.lid + lip_h + 1)
-    lid = union([lid_plate, lip_outer.difference(lip_inner, engine="manifold")])
+    # Stepped ziggurat crown like the radio's silhouette: perimeter plate, a
+    # shoulder, a step and a tall central spine over the heatsink vents.
+    # Printed outer-face UP on its flat underside; every step narrows as it
+    # rises, so no supports are needed.
+    t1 = a.lid + 1.2
+    hx0 = px(VENT_AREAS_PX[-1][0], 0)[0] - 2        # spine x-range = heatsink vent area
+    hx1 = px(VENT_AREAS_PX[-1][2], 0)[0] + 2
+    parts = [box(ox0, oy0, 0, ox1, oy1, t1)] + [tube(ear_r, 0, t1, c) for c in ear_centres]
+    lid_top, stepA = t1, None
+    if deco:
+        tiers = [(ox0 + 7, oy0 + 7, ox1 - 7, oy1 - 7),
+                 (hx0 - 4, oy0 + 12, hx1 + 4, oy1 - 12),
+                 (hx0, oy0 + 17, hx1, oy1 - 17)]
+        stepA = tiers[1]
+        z = t1
+        for (x0, y0, x1, y1) in tiers:
+            parts.append(box(x0, y0, z - 0.01, x1, y1, z + STEP))
+            z += STEP
+        lid_top = z
+    lid = union(parts)
+
+    # groove on the underside that receives the base's tongue
+    groove = box(ix0 - 1.2 - tg, iy0 - 1.2 - tg, -1, ix1 + 1.2 + tg, iy1 + 1.2 + tg, tongue_h + 0.4).difference(
+        box(ix0 + tg, iy0 + tg, -2, ix1 - tg, iy1 - tg, tongue_h + 2), engine="manifold")
+    lid = lid.difference(groove, engine="manifold")
 
     for c in ear_centres:
-        hole = creation.cylinder(radius=a.screw_d / 2, height=a.lid + 2, sections=32)
-        hole.apply_translation([c[0], c[1], a.lid / 2])
+        hole = creation.cylinder(radius=a.screw_d / 2, height=t1 + 2, sections=32)
+        hole.apply_translation([c[0], c[1], t1 / 2])
         lid = lid.difference(hole, engine="manifold")
 
     if not a.no_vents:
@@ -280,14 +312,14 @@ def main():
             vx1, vy1 = px(ax1, ay0)
             x = vx0
             while x + slot_w <= vx1:
-                lid = lid.difference(box(x, vy0, -1, x + slot_w, vy1, a.lid + lip_h + 1),
+                lid = lid.difference(box(x, vy0, -1, x + slot_w, vy1, lid_top + 1),
                                      engine="manifold")
                 x += pitch
 
     if deco:
-        lid = lid.difference(lid_deco(ox0, oy0, ox1, oy1, W, H, px), engine="manifold")
-    # NOTE: the lid is exported plate-down (outer face on z=0, lip pointing up),
-    # which is the print orientation: no supports needed.
+        lid = lid.difference(lid_deco(ox0, oy0, ox1, oy1, H, px, t1 + STEP, stepA),
+                             engine="manifold")
+    # lid is exported in print orientation (underside on z=0, crown pointing up)
 
     # ---------------------------------------------------------------- write
     os.makedirs(a.out, exist_ok=True)
