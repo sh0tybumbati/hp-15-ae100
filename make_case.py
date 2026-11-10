@@ -52,6 +52,9 @@ RIGHT_PORTS_PX = [
 VENT_AREA_PX = (340, 380, 700, 690)
 
 
+BUILD_VOLUME = (256, 256, 256)   # Elegoo Centauri Carbon 2 (mm); edit for other printers
+
+
 def tube(r_out, r_in, h, center_xy, z0=0.0, sections=48):
     """Hollow cylinder standing on z0."""
     c = creation.cylinder(radius=r_out, height=h, sections=sections)
@@ -190,6 +193,8 @@ def main():
         mesh.export(path)
         ext = mesh.bounds[1] - mesh.bounds[0]
         print(f"{path}: watertight={mesh.is_watertight} size={ext[0]:.1f}x{ext[1]:.1f}x{ext[2]:.1f} mm")
+        if any(e > b for e, b in zip(ext, BUILD_VOLUME)):
+            print(f"  WARNING: {fn} exceeds the {BUILD_VOLUME} mm build volume")
 
 
 if __name__ == "__main__":
