@@ -26,8 +26,13 @@ from trimesh import creation, transformations
 # Layout taken from the photo (pixel coordinates, origin top-left of photo).
 # Everything is scaled by (board width in mm / photo board width in px).
 # --------------------------------------------------------------------------
-PX_X0, PX_X1 = 22, 975      # left / right edge of PCB in the photo
-PX_Y0, PX_Y1 = 233, 795     # top / bottom edge of PCB in the photo
+PX_X0, PX_X1 = 24, 969      # left / right edge of PCB in the photo
+PX_Y0, PX_Y1 = 234, 790     # top / bottom of the PCB outline (incl. the SATA lobe, bottom-left)
+# Scale reference measured on the real board: 142 mm from the top edge above the
+# display connector to the bottom edge below the CPU. In the photo that span is
+# REF_Y0..REF_Y1 (548 px) -> ~0.259 mm per pixel, applied to both axes.
+REF_Y0, REF_Y1 = 234, 782
+REF_HEIGHT_MM = 142.0
 
 # PCB mounting holes (x, y) in photo pixels -> become screw standoffs.
 # Delete/add entries to match your board. (Heatsink/fan screws are omitted.)
@@ -143,12 +148,13 @@ def lid_deco(ox0, oy0, ox1, oy1, H, px, top, stepA):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--board-width", type=float, default=203.0,
-                    help="measured PCB width, left-right in photo (mm) [203, estimate]")
-    ap.add_argument("--board-height", type=float, default=None,
-                    help="measured PCB height (mm); default keeps the photo aspect ratio")
-    ap.add_argument("--clearance", type=float, default=1.0, help="gap PCB<->wall (mm)")
-    ap.add_argument("--wall", type=float, default=2.4, help="wall thickness (mm)")
+    ap.add_argument("--ref-height", type=float, default=REF_HEIGHT_MM,
+                    help="measured PCB height between the display connector edge and the "
+                         "edge below the CPU (mm) [142]; sets the scale of the whole layout")
+    ap.add_argument("--board-width", type=float, default=None,
+                    help="optional: measured overall PCB width (mm) to override the x scale")
+    ap.add_argument("--clearance", type=float, default=0.8, help="gap PCB<->wall (mm)")
+    ap.add_argument("--wall", type=float, default=2.0, help="wall thickness (mm)")
     ap.add_argument("--floor", type=float, default=2.0, help="floor thickness (mm)")
     ap.add_argument("--standoff", type=float, default=4.0, help="standoff height (mm)")
     ap.add_argument("--pcb", type=float, default=1.2, help="PCB thickness (mm)")
@@ -171,10 +177,10 @@ def main():
     if a.dc_jack_d:
         DC_JACK["d_mm"] = a.dc_jack_d
 
-    sx = a.board_width / (PX_X1 - PX_X0)
-    W = a.board_width
-    H = a.board_height or (PX_Y1 - PX_Y0) * sx
-    sy = H / (PX_Y1 - PX_Y0)
+    sy = a.ref_height / (REF_Y1 - REF_Y0)
+    sx = a.board_width / (PX_X1 - PX_X0) if a.board_width else sy
+    W = (PX_X1 - PX_X0) * sx
+    H = (PX_Y1 - PX_Y0) * sy
 
     def px(x, y):          # photo px -> board mm (origin bottom-left, y up)
         return (x - PX_X0) * sx, (PX_Y1 - y) * sy
@@ -188,8 +194,10 @@ def main():
     z_pcb_top = z_pcb_bot + a.pcb
     z_top = z_pcb_top + a.comp_height                     # rim of base
 
-    ear_r = 5.0
-    ear_centres = [(ox0, oy0), (ox1, oy0), (ox0, oy1), (ox1, oy1)]
+    ear_r, ear_off = 5.0, 1.5
+    # lid-screw ears sit flush with the left/right ends and stick out front/back only
+    ear_centres = [(ox0 + ear_r, oy0 - ear_off), (ox1 - ear_r, oy0 - ear_off),
+                   (ox0 + ear_r, oy1 + ear_off), (ox1 - ear_r, oy1 + ear_off)]
 
     # ---------------------------------------------------------------- base
     deco = not a.no_deco
@@ -199,11 +207,11 @@ def main():
     if deco:
         # ziggurat foot: two stepped tiers like the radio's stacked base bands
         for i in range(3):      # 3 tiers, widest at the bed (prints without supports)
-            o = (3 - i) * RIB_OUT
+            o = RIB_OUT + (2 - i) * 0.3
             extras.append(box(ox0 - o, oy0 - o, i * FOOT_H, ox1 + o, oy1 + o, (i + 1) * FOOT_H))
         # vertical fluting on all four walls, stopping short of the rim
         zr0, zr1 = 3 * FOOT_H, z_top - 2.0
-        lo = ear_r + 3
+        lo = 2 * ear_r + 1
         def hit(v, spans):
             return any(v + RIB_W > lo_ and v < hi_ for lo_, hi_ in spans)
         k = 1.5   # keep ribs this far from any opening
@@ -328,7 +336,7 @@ def main():
     parts = {}
     if a.only in (None, "plate"):
         # quick test-fit: flat plate + the same standoffs, no walls
-        mg = 4.0
+        mg = 3.0
         plate = union([box(-mg, -mg, 0, W + mg, H + mg, a.floor)] +
                       [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
                        for p in MOUNT_HOLES_PX])
