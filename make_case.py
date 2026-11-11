@@ -26,16 +26,29 @@ from trimesh import creation, transformations
 # Layout taken from the photo (pixel coordinates, origin top-left of photo).
 # Everything is scaled by (board width in mm / photo board width in px).
 # --------------------------------------------------------------------------
-PX_X0, PX_X1 = 24, 972      # SATA connector's left edge / tip of the bottom-right orange tab
-PX_Y0, PX_Y1 = 234, 790     # top / bottom of the PCB outline (incl. the SATA lobe, bottom-left)
-# Scale reference measured on the real board: 142 mm from the top edge above the
-# display connector to the bottom edge below the CPU. In the photo that span is
-# REF_Y0..REF_Y1 (548 px) -> ~0.259 mm per pixel vertically.
-# Second measurement: 242 mm from the SATA connector's end to the tip of the orange
-# bottom-right tab (PX_X0..PX_X1, 948 px) -> ~0.255 mm per pixel horizontally.
-REF_Y0, REF_Y1 = 234, 782
-REF_HEIGHT_MM = 142.0
-REF_WIDTH_MM = 242.0
+# The photo is not square to the board: the bottom edge of the PCB drops ~0.64 deg
+# towards the right (measured on the long bottom edge, 830 px, y 778 -> 786). All
+# photo pixels are rotated by TILT_DEG into the board's own frame before scaling.
+TILT_DEG = 0.64
+
+# Landmarks in the photo (px) used to calibrate against real measurements:
+LM_LEFT = (23.5, 740)     # outer end of the SATA connector
+LM_TIP = (972, 770)       # tip of the orange tab at the bottom-right corner
+LM_TOP = (520, 233.5)     # top PCB edge, above the display connector
+LM_BOTTOM = (520, 782)    # bottom PCB edge, below the CPU
+LM_LOBE = (80, 790)       # lowest point of the bottom-left lobe (outline bottom)
+# Real-world measurements:
+REF_WIDTH_MM = 242.0      # LM_LEFT -> LM_TIP, along the board's long axis
+REF_HEIGHT_MM = 142.0     # LM_TOP -> LM_BOTTOM, across the board
+# where along the board each photo-pixel lookup is made (the tilt makes y depend on x)
+RIGHT_X, LEFT_X, TOP_Y = 960, 40, 234
+
+
+def _uv(x, y):
+    """photo pixel -> (u along the board's long axis, v across it, down), in px."""
+    t = np.radians(TILT_DEG)
+    return x * np.cos(t) + y * np.sin(t), -x * np.sin(t) + y * np.cos(t)
+
 
 # PCB mounting holes (x, y) in photo pixels -> become screw standoffs.
 # Delete/add entries to match your board. (Heatsink/fan screws are omitted.)
@@ -181,13 +194,17 @@ def main():
     if a.dc_jack_d:
         DC_JACK["d_mm"] = a.dc_jack_d
 
-    sy = a.ref_height / (REF_Y1 - REF_Y0)
-    sx = a.ref_width / (PX_X1 - PX_X0)
-    W = (PX_X1 - PX_X0) * sx
-    H = (PX_Y1 - PX_Y0) * sy
+    u_left, u_tip = _uv(*LM_LEFT)[0], _uv(*LM_TIP)[0]
+    v_top = min(_uv(x, y)[1] for x, y in [LM_TOP, (370, 233), (610, 232)])
+    v_bot = _uv(*LM_LOBE)[1]
+    sx = a.ref_width / (u_tip - u_left)
+    sy = a.ref_height / (_uv(*LM_BOTTOM)[1] - _uv(*LM_TOP)[1])
+    W = (u_tip - u_left) * sx
+    H = (v_bot - v_top) * sy
 
-    def px(x, y):          # photo px -> board mm (origin bottom-left, y up)
-        return (x - PX_X0) * sx, (PX_Y1 - y) * sy
+    def px(x, y):          # photo px -> board mm (origin bottom-left, y up), tilt-corrected
+        u, v = _uv(x, y)
+        return (u - u_left) * sx, (v_bot - v) * sy
 
     ix0, iy0 = -a.clearance, -a.clearance                 # cavity
     ix1, iy1 = W + a.clearance, H + a.clearance
@@ -219,11 +236,11 @@ def main():
         def hit(v, spans):
             return any(v + RIB_W > lo_ and v < hi_ for lo_, hi_ in spans)
         k = 1.5   # keep ribs this far from any opening
-        right_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in RIGHT_PORTS_PX]
-        jy = px(0, DC_JACK['y_px'])[1]
+        right_skip = [(px(RIGHT_X, yb)[1] - k, px(RIGHT_X, ya)[1] + k) for _, ya, yb, _ in RIGHT_PORTS_PX]
+        jy = px(RIGHT_X, DC_JACK['y_px'])[1]
         right_skip.append((jy - DC_JACK['d_mm'] / 2 - k, jy + DC_JACK['d_mm'] / 2 + k))
-        left_skip = [(px(0, yb)[1] - k, px(0, ya)[1] + k) for _, ya, yb, _ in LEFT_PORTS_PX]
-        back_skip = [(px(xa, 0)[0] - k, px(xb, 0)[0] + k) for _, xa, xb, _ in BACK_VENTS_PX]
+        left_skip = [(px(LEFT_X, yb)[1] - k, px(LEFT_X, ya)[1] + k) for _, ya, yb, _ in LEFT_PORTS_PX]
+        back_skip = [(px(xa, TOP_Y)[0] - k, px(xb, TOP_Y)[0] + k) for _, xa, xb, _ in BACK_VENTS_PX]
         x = ox0 + lo
         while x + RIB_W <= ox1 - lo:
             extras.append(box(x, oy0 - RIB_OUT, zr0, x + RIB_W, oy0 + 0.5, zr1))
@@ -253,15 +270,15 @@ def main():
     # port cut-outs (right wall). 0.8 mm margin on every side.
     m = 0.8
     for name, ya, yb, hh in RIGHT_PORTS_PX:
-        y_hi = px(0, ya)[1] + m
-        y_lo = px(0, yb)[1] - m
+        y_hi = px(RIGHT_X, ya)[1] + m
+        y_lo = px(RIGHT_X, yb)[1] - m
         cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 6, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
     # back wall exhaust slots (fan blows out towards the screen hinge)
     for name, xa, xb, hh in BACK_VENTS_PX:
         slot_w, pitch = 3.5, 5.5
-        x0v, x1v = px(xa, 0)[0], px(xb, 0)[0]
+        x0v, x1v = px(xa, TOP_Y)[0], px(xb, TOP_Y)[0]
         x = x0v
         while x + slot_w <= x1v:
             cut = box(x, iy1 - 1, z_pcb_bot + 1.0, x + slot_w, oy1 + 6, z_pcb_top + hh)
@@ -270,13 +287,13 @@ def main():
 
     # left wall cut-outs (SATA connector)
     for name, ya, yb, hh in LEFT_PORTS_PX:
-        y_hi = px(0, ya)[1] + m
-        y_lo = px(0, yb)[1] - m
+        y_hi = px(LEFT_X, ya)[1] + m
+        y_lo = px(LEFT_X, yb)[1] - m
         cut = box(ox0 - 6, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
     # DC jack hole in the right wall
-    jy = px(0, DC_JACK["y_px"])[1]
+    jy = px(RIGHT_X, DC_JACK["y_px"])[1]
     hole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=ox1 - ix1 + 8, sections=48)
     hole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
     hole.apply_translation([(ix1 - 1 + ox1 + 6) / 2, jy, z_pcb_top + DC_JACK["z_mm"]])
@@ -294,8 +311,8 @@ def main():
     # Printed outer-face UP on its flat underside; every step narrows as it
     # rises, so no supports are needed.
     t1 = a.lid + 1.2
-    hx0 = px(VENT_AREAS_PX[-1][0], 0)[0] - 2        # spine x-range = heatsink vent area
-    hx1 = px(VENT_AREAS_PX[-1][2], 0)[0] + 2
+    hx0 = px(VENT_AREAS_PX[-1][0], VENT_AREAS_PX[-1][1])[0] - 2        # spine x-range = heatsink vent area
+    hx1 = px(VENT_AREAS_PX[-1][2], VENT_AREAS_PX[-1][1])[0] + 2
     parts = [box(ox0, oy0, 0, ox1, oy1, t1)] + [tube(ear_r, 0, t1, c) for c in ear_centres]
     lid_top, stepA = t1, None
     if deco:
