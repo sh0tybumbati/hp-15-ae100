@@ -59,6 +59,34 @@ MOUNT_HOLES_PX = [
     (961, 773),   # bottom-right corner tab
 ]
 
+# Hand-tuning after test prints, keyed by standoff number (1-based position in
+# MOUNT_HOLES_PX, as labelled in standoff_labels.png).
+# Offsets are in mm on the board: +x = right (ports), +y = up (back / fan side).
+MOUNT_ADJUST_MM = {
+    1: (-1.0, 0.0),
+    3: (+1.0, -1.0),
+    5: (+1.0, -1.0),
+    6: (-1.5, 0.0),
+    7: (-1.0, 0.0),
+    9: (-1.5, +1.0),
+    10: (+0.5, 0.0),
+    13: (-1.0, +1.0),
+}
+MOUNT_REMOVED = {8, 11, 12}      # standoffs dropped after the test fit
+
+
+def mount_points_mm(px):
+    """[(number, x_mm, y_mm)] for the standoffs that are kept, after adjustments."""
+    out = []
+    for n, p in enumerate(MOUNT_HOLES_PX, 1):
+        if n in MOUNT_REMOVED:
+            continue
+        x, y = px(*p)
+        dx, dy = MOUNT_ADJUST_MM.get(n, (0.0, 0.0))
+        out.append((n, x + dx, y + dy))
+    return out
+
+
 # Rear-panel I/O on the right edge: (name, y_top_px, y_bottom_px, height_mm)
 # height_mm = how far the connector rises above the PCB surface.
 RIGHT_PORTS_PX = [
@@ -259,7 +287,7 @@ def main():
     body = body.difference(box(ix0, iy0, a.floor, ix1, iy1, z_top + 1), engine="manifold")
 
     standoffs = [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5,
-                      px(*p), z0=a.floor - 0.5) for p in MOUNT_HOLES_PX]
+                      (x, y), z0=a.floor - 0.5) for _, x, y in mount_points_mm(px)]
     body = union([body] + standoffs)
 
     # pilot holes in ears (open at top, blind at the bottom)
@@ -360,8 +388,8 @@ def main():
         # quick test-fit: flat plate + the same standoffs, no walls
         mg = 3.0
         plate = union([box(-mg, -mg, 0, W + mg, H + mg, a.floor)] +
-                      [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
-                       for p in MOUNT_HOLES_PX])
+                      [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
+                       for _, x, y in mount_points_mm(px)])
         parts["test_standoff_plate.stl"] = plate
     if a.only in (None, "chassis"):
         # standoff plate + I/O shield (right-edge wall with the port cut-outs, DC jack
@@ -380,8 +408,8 @@ def main():
                                  z_pcb_top + DC_JACK["z_mm"]])
         shield = shield.difference(jhole, engine="manifold")
         chassis = union([box(-mg2, -mg2, 0, ox1, H + mg2, a.floor), shield] +
-                        [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
-                         for p in MOUNT_HOLES_PX])
+                        [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
+                         for _, x, y in mount_points_mm(px)])
         parts["standoff_plate_io_shield.stl"] = chassis
     if a.only in (None, "base"):
         parts["case_base.stl"] = body
@@ -389,8 +417,7 @@ def main():
         parts["case_lid.stl"] = lid
     if a.ghost:
         g = [box(0, 0, z_pcb_bot, W, H, z_pcb_top)]
-        for p in MOUNT_HOLES_PX:
-            x, y = px(*p)
+        for _, x, y in mount_points_mm(px):
             g.append(tube(2.5, 0, 2.0, (x, y), z0=z_pcb_top))
         parts["board_ghost.stl"] = union(g)
 

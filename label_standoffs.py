@@ -36,7 +36,19 @@ for gy in range(0, int(H) + 10, 10):
 
 rows = []
 for i, p in enumerate(mc.MOUNT_HOLES_PX, 1):
-    x, y = to_mm(*p); rows.append((i, x, y))
+    x0, y0 = to_mm(*p)
+    if i in mc.MOUNT_REMOVED:                      # removed: show a grey ghost
+        ax.add_patch(plt.Circle((x0, y0), 3.0, fc="none", ec="#808080", lw=1.5, ls=":", zorder=3))
+        ax.plot([x0 - 2.5, x0 + 2.5], [y0 - 2.5, y0 + 2.5], color="#808080", lw=1.5, zorder=3)
+        ax.plot([x0 - 2.5, x0 + 2.5], [y0 + 2.5, y0 - 2.5], color="#808080", lw=1.5, zorder=3)
+        ax.annotate(f"{i} removed", (x0, y0), xytext=(x0 + 6, y0 + 6), fontsize=12, color="#606060", ha="center",
+                    zorder=5, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#808080"))
+        rows.append((i, None, None)); continue
+    dx, dy = mc.MOUNT_ADJUST_MM.get(i, (0.0, 0.0))
+    x, y = x0 + dx, y0 + dy; rows.append((i, x, y))
+    if dx or dy:                                   # show where it was
+        ax.add_patch(plt.Circle((x0, y0), 3.0, fc="none", ec="#808080", lw=1, ls=":", zorder=2))
+        ax.annotate("", (x, y), xytext=(x0, y0), arrowprops=dict(arrowstyle="->", color="k", lw=1.2), zorder=4)
     ax.add_patch(plt.Circle((x, y), 3.0, fc="#ff3030", ec="k", lw=1, alpha=0.8, zorder=3))
     ax.add_patch(plt.Circle((x, y), 1.0, fc="#ffe000", ec="k", lw=0.6, zorder=4))
     ax.annotate(str(i), (x, y), xytext=(x + 5, y + 5), fontsize=17, fontweight="bold", color="#b00000",
@@ -47,9 +59,10 @@ ax.set_xlim(-6, W + 6); ax.set_ylim(-6, H + 8); ax.set_aspect("equal")
 ax.set_xticks(range(0, int(W) + 10, 20)); ax.set_yticks(range(0, int(H) + 10, 20))
 ax.set_xlabel("x (mm), along the board:  0 = SATA end   →  toward the ports / right edge")
 ax.set_ylabel("y (mm):  0 = bottom edge  ↑  toward the fan / back")
-ax.set_title("Standoff map (1 grid square = 10 mm; red = 6 mm post, yellow = 2 mm pilot hole)\n"
+ax.set_title("Standoff map after nudges (1 grid square = 10 mm; red = 6 mm post, yellow = 2 mm pilot hole)\n"
              "Nudge directions:  +x = right (ports),  -x = left (SATA),  +y = up (back / fan),  -y = down (front)")
-tbl = "#    x      y\n" + "\n".join(f"{i:>2} {x:6.1f} {y:6.1f}" for i, x, y in rows)
+tbl = "#    x      y\n" + "\n".join(
+    f"{i:>2} {x:6.1f} {y:6.1f}" if x is not None else f"{i:>2}  removed" for i, x, y in rows)
 ax.text(0.01, 0.99, tbl, transform=ax.transAxes, va="top", family="monospace", fontsize=11,
         bbox=dict(fc="white", ec="k", alpha=0.9), zorder=6)
 fig.tight_layout(); fig.savefig("standoff_labels.png")
