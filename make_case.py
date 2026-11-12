@@ -90,6 +90,7 @@ def mount_points_mm(px):
 # Rear-panel I/O on the right edge: (name, y_top_px, y_bottom_px, height_mm)
 # height_mm = how far the connector rises above the PCB surface.
 RIGHT_PORTS_PX = [
+    ("Ethernet (RJ45)",     285, 347, 12.5),
     ("HDMI",                395, 462, 7.0),
     ("USB-1",               475, 532, 7.5),
     ("USB-2",               548, 606, 7.5),
@@ -97,10 +98,10 @@ RIGHT_PORTS_PX = [
     ("audio jack",          685, 732, 7.0),
 ]
 
-# Detached DC power jack: the board only has a cable header at the top right;
-# the jack itself screws into the wall. Round hole in the right wall.
-# (y_top_px: height along the edge, d_mm: hole dia, z_mm: centre above PCB top)
-DC_JACK = {"y_px": 318, "d_mm": 11.5, "z_mm": 5.0}
+# Detached DC power jack: it screws into the wall and connects by cable, so it can go
+# anywhere. Round hole in the BACK wall (the right wall is full with the I/O row).
+# (x_px: position along the back wall, d_mm: hole dia, z_mm: centre above PCB top)
+DC_JACK = {"x_px": 700, "d_mm": 11.5, "z_mm": 5.0}
 
 # Left-edge connectors: (name, y_top_px, y_bottom_px, height_mm)
 LEFT_PORTS_PX = [
@@ -268,10 +269,10 @@ def main():
             return any(v + RIB_W > lo_ and v < hi_ for lo_, hi_ in spans)
         k = 1.5   # keep ribs this far from any opening
         right_skip = [(px(RIGHT_X, yb)[1] - k, px(RIGHT_X, ya)[1] + k) for _, ya, yb, _ in RIGHT_PORTS_PX]
-        jy = px(RIGHT_X, DC_JACK['y_px'])[1]
-        right_skip.append((jy - DC_JACK['d_mm'] / 2 - k, jy + DC_JACK['d_mm'] / 2 + k))
         left_skip = [(px(LEFT_X, yb)[1] - k, px(LEFT_X, ya)[1] + k) for _, ya, yb, _ in LEFT_PORTS_PX]
         back_skip = [(px(xa, TOP_Y)[0] - k, px(xb, TOP_Y)[0] + k) for _, xa, xb, _ in BACK_VENTS_PX]
+        jx = px(DC_JACK['x_px'], TOP_Y)[0]
+        back_skip.append((jx - DC_JACK['d_mm'] / 2 - k, jx + DC_JACK['d_mm'] / 2 + k))
         x = ox0 + lo
         while x + RIB_W <= ox1 - lo:
             extras.append(box(x, oy0 - RIB_OUT, zr0, x + RIB_W, oy0 + 0.5, zr1))
@@ -303,7 +304,7 @@ def main():
     for name, ya, yb, hh in RIGHT_PORTS_PX:
         y_hi = px(RIGHT_X, ya)[1] + m
         y_lo = px(RIGHT_X, yb)[1] - m
-        cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 6, y_hi, z_pcb_top + hh + m)
+        cut = box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 6, y_hi, min(z_pcb_top + hh + m, z_top - 1.0))
         body = body.difference(cut, engine="manifold")
 
     # back wall exhaust slots (fan blows out towards the screen hinge)
@@ -323,11 +324,11 @@ def main():
         cut = box(ox0 - 6, y_lo, z_pcb_bot, ix0 + 1, y_hi, z_pcb_top + hh + m)
         body = body.difference(cut, engine="manifold")
 
-    # DC jack hole in the right wall
-    jy = px(RIGHT_X, DC_JACK["y_px"])[1]
-    hole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=ox1 - ix1 + 8, sections=48)
-    hole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
-    hole.apply_translation([(ix1 - 1 + ox1 + 6) / 2, jy, z_pcb_top + DC_JACK["z_mm"]])
+    # DC jack hole in the back wall
+    jx = px(DC_JACK["x_px"], TOP_Y)[0]
+    hole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=(oy1 + 6) - (iy1 - 1), sections=48)
+    hole.apply_transform(transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    hole.apply_translation([jx, (iy1 - 1 + oy1 + 6) / 2, z_pcb_top + DC_JACK["z_mm"]])
     body = body.difference(hole, engine="manifold")
 
     # locating tongue on the inner half of the wall top
@@ -394,8 +395,7 @@ def main():
                        for _, x, y in mount_points_mm(px)])
         parts["test_standoff_plate.stl"] = plate
     if a.only in (None, "chassis"):
-        # standoff plate + I/O shield (right-edge wall with the port cut-outs, DC jack
-        # hole) in one piece, to build your own enclosure around.
+        # standoff plate + I/O shield (right-edge wall with the port cut-outs) in one piece, to build your own enclosure around.
         # Origin = bottom-left corner of the board outline, +x along the board, +y up
         # the photo, z up from the bottom of the plate.
         mg2 = 3.0
@@ -403,12 +403,7 @@ def main():
         for name, ya, yb, hh in RIGHT_PORTS_PX:
             y_hi, y_lo = px(RIGHT_X, ya)[1] + m, px(RIGHT_X, yb)[1] - m
             shield = shield.difference(
-                box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, z_pcb_top + hh + m), engine="manifold")
-        jhole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=ox1 - ix1 + 4, sections=48)
-        jhole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
-        jhole.apply_translation([(ix1 + ox1) / 2, px(RIGHT_X, DC_JACK["y_px"])[1],
-                                 z_pcb_top + DC_JACK["z_mm"]])
-        shield = shield.difference(jhole, engine="manifold")
+                box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, min(z_pcb_top + hh + m, z_top - 1.0)), engine="manifold")
         chassis = union([box(-mg2, -mg2, 0, ox1, H + mg2, a.floor), shield] +
                         [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
                          for _, x, y in mount_points_mm(px)])
