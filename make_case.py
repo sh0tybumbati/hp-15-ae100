@@ -173,7 +173,7 @@ def main():
     ap.add_argument("--clearance", type=float, default=0.8, help="gap PCB<->wall (mm)")
     ap.add_argument("--wall", type=float, default=2.0, help="wall thickness (mm)")
     ap.add_argument("--floor", type=float, default=2.0, help="floor thickness (mm)")
-    ap.add_argument("--standoff", type=float, default=4.0, help="standoff height (mm)")
+    ap.add_argument("--standoff", type=float, default=6.0, help="standoff height (mm)")
     ap.add_argument("--pcb", type=float, default=1.2, help="PCB thickness (mm)")
     ap.add_argument("--comp-height", type=float, default=14.0,
                     help="tallest part above PCB (RAM slot, heatsink...) (mm)")
