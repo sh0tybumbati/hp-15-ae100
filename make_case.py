@@ -90,7 +90,7 @@ def mount_points_mm(px):
 # Rear-panel I/O on the right edge: (name, y_top_px, y_bottom_px, height_mm)
 # height_mm = how far the connector rises above the PCB surface.
 RIGHT_PORTS_PX = [
-    ("Ethernet (RJ45)",     285, 347, 12.5),
+    ("Ethernet (RJ45)",     308, 380, 12.5),
     ("HDMI",                395, 462, 7.0),
     ("USB-1",               475, 532, 7.5),
     ("USB-2",               548, 606, 7.5),
@@ -102,6 +102,22 @@ RIGHT_PORTS_PX = [
 # anywhere. Round hole in the BACK wall (the right wall is full with the I/O row).
 # (x_px: position along the back wall, d_mm: hole dia, z_mm: centre above PCB top)
 DC_JACK = {"x_px": 700, "d_mm": 11.5, "z_mm": 5.0}
+
+# Power/on-off switch SW1 on the BACK (underside) of the PCB, just inboard of the
+# Ethernet jack. Located by registering the back photo to the front photo (holes +
+# port rows, ~1.5 mm uncertainty). A compliant cantilever button is cut into the floor
+# below it: a tab of the floor, free on three sides, with a post that presses SW1.
+SWITCH = {
+    "x_mm": 214.0, "y_mm": 115.6,   # SW1 plunger centre, board mm
+    "tab_len": 24.0,                # root of the cantilever (inboard, -x) -> post (mm); sets the spring rate
+    "tab_w": 9.0,                   # width of the tab
+    "end_margin": 3.0,              # free end sits this far beyond the post (towards the Ethernet jack)
+    "slot": 1.0,                    # gap cut around the tab
+    "post_d": 4.0,                  # post diameter: bigger than the plunger so a ~1 mm
+                                    # position error still hits it; the switch body is the stop
+    "sw_h": 3.0,                    # plunger tip height below the PCB underside (guess!)
+    "gap": 0.4,                     # rest clearance post tip <-> plunger
+}
 
 # Left-edge connectors: (name, y_top_px, y_bottom_px, height_mm)
 LEFT_PORTS_PX = [
@@ -138,6 +154,22 @@ def box(x0, y0, z0, x1, y1, z1):
     b = creation.box(extents=[x1 - x0, y1 - y0, z1 - z0])
     b.apply_translation([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2])
     return b
+
+
+def button_parts(sw, floor_t, z_pcb_bot, x_limit):
+    """(slot cutter, post) for the compliant floor button, in board mm."""
+    cx, cy = sw["x_mm"], sw["y_mm"]
+    xr = cx - sw["tab_len"]                           # root edge of the cantilever (inboard)
+    xf = cx + sw["end_margin"]                        # free end (stays clear of the Ethernet jack)
+    hw, g = sw["tab_w"] / 2, sw["slot"]
+    z0, z1 = -1.0, floor_t + 0.5
+    cut = union([box(xr, cy - hw - g, z0, xf + g, cy - hw, z1),          # side slots
+                 box(xr, cy + hw, z0, xf + g, cy + hw + g, z1),
+                 box(xf, cy - hw - g, z0, xf + g, cy + hw + g, z1)])     # free-end slot
+    z_tip = z_pcb_bot - sw["sw_h"] - sw["gap"]
+    post = creation.cylinder(radius=sw["post_d"] / 2, height=z_tip - (floor_t - 0.01), sections=40)
+    post.apply_translation([cx, cy, (floor_t - 0.01) + (z_tip - (floor_t - 0.01)) / 2])
+    return cut, post
 
 
 def union(parts):
@@ -217,12 +249,19 @@ def main():
     ap.add_argument("--no-vents", action="store_true")
     ap.add_argument("--dc-jack-d", type=float, default=None, help="DC jack hole dia (mm) [11.5]")
     ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
+    ap.add_argument("--no-button", action="store_true", help="omit the compliant power-button tab")
+    ap.add_argument("--sw-height", type=float, default=None,
+                    help="height of the switch plunger tip below the PCB underside (mm) [3.0]")
+    ap.add_argument("--no-feet", action="store_true", help="omit the stick-on rubber foot recesses")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
-    ap.add_argument("--only", choices=["base", "lid", "plate", "chassis"],
+    ap.add_argument("--only", choices=["base", "lid", "plate", "chassis", "button"],
                     help="write just one part; 'plate' = standoff test-fit plate, "
-                         "'chassis' = standoff plate + I/O shield in one piece")
+                         "'chassis' = standoff plate + I/O shield in one piece, "
+                         "'button' = small coupon to test the power-button alignment")
     ap.add_argument("--out", default="out", help="output directory")
     a = ap.parse_args()
+    if a.sw_height is not None:
+        SWITCH["sw_h"] = a.sw_height
     if a.dc_jack_d:
         DC_JACK["d_mm"] = a.dc_jack_d
 
@@ -289,6 +328,15 @@ def main():
     body = union([shell] + ears + extras)
     body = body.difference(box(ix0, iy0, a.floor, ix1, iy1, z_top + 1), engine="manifold")
 
+    use_button = not a.no_button
+    if use_button:
+        b_cut, b_post = button_parts(SWITCH, a.floor, z_pcb_bot, ix1)
+        body = union([body.difference(b_cut, engine="manifold"), b_post])
+    if not a.no_feet:     # shallow recesses for stick-on rubber feet (lifts the case so the button can be pressed)
+        for fx, fy in [(24, 24), (W - 24, 24), (24, H - 22), (W - 70, H - 22)]:
+            rec = creation.cylinder(radius=5.0, height=1.6, sections=48)
+            rec.apply_translation([fx, fy, -0.2])
+            body = body.difference(rec, engine="manifold")
     standoffs = [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5,
                       (x, y), z0=a.floor - 0.5) for _, x, y in mount_points_mm(px)]
     body = union([body] + standoffs)
@@ -390,10 +438,26 @@ def main():
     if a.only in (None, "plate"):
         # quick test-fit: flat plate + the same standoffs, no walls
         mg = 3.0
-        plate = union([box(-mg, -mg, 0, W + mg, H + mg, a.floor)] +
+        base_plate = box(-mg, -mg, 0, W + mg, H + mg, a.floor)
+        extra = []
+        if use_button:
+            c_, p_ = button_parts(SWITCH, a.floor, z_pcb_bot, ix1)
+            base_plate = base_plate.difference(c_, engine="manifold"); extra.append(p_)
+        plate = union([base_plate] + extra +
                       [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
                        for _, x, y in mount_points_mm(px)])
         parts["test_standoff_plate.stl"] = plate
+    if a.only in (None, "button"):
+        # small coupon: just the corner around SW1 (standoffs 3, 4, 5 + the button) for a quick alignment test
+        cx0, cy0 = 180.0, 80.0
+        cp = box(cx0, cy0, 0, ix1 + a.wall, H + 3.0, a.floor)
+        extra = []
+        if use_button:
+            c_, p_ = button_parts(SWITCH, a.floor, z_pcb_bot, ix1)
+            cp = cp.difference(c_, engine="manifold"); extra.append(p_)
+        parts["button_test_coupon.stl"] = union(
+            [cp] + extra + [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
+                            for n, x, y in mount_points_mm(px) if x >= cx0 and y >= cy0])
     if a.only in (None, "chassis"):
         # standoff plate + I/O shield (right-edge wall with the port cut-outs) in one piece, to build your own enclosure around.
         # Origin = bottom-left corner of the board outline, +x along the board, +y up
@@ -404,7 +468,12 @@ def main():
             y_hi, y_lo = px(RIGHT_X, ya)[1] + m, px(RIGHT_X, yb)[1] - m
             shield = shield.difference(
                 box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, min(z_pcb_top + hh + m, z_top - 1.0)), engine="manifold")
-        chassis = union([box(-mg2, -mg2, 0, ox1, H + mg2, a.floor), shield] +
+        c_plate = box(-mg2, -mg2, 0, ox1, H + mg2, a.floor)
+        c_extra = []
+        if use_button:
+            c_, p_ = button_parts(SWITCH, a.floor, z_pcb_bot, ix1)
+            c_plate = c_plate.difference(c_, engine="manifold"); c_extra.append(p_)
+        chassis = union([c_plate, shield] + c_extra +
                         [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
                          for _, x, y in mount_points_mm(px)])
         parts["standoff_plate_io_shield.stl"] = chassis
