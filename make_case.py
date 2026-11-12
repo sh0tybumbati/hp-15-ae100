@@ -187,8 +187,9 @@ def main():
     ap.add_argument("--dc-jack-d", type=float, default=None, help="DC jack hole dia (mm) [11.5]")
     ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
-    ap.add_argument("--only", choices=["base", "lid", "plate"],
-                    help="write just one part; 'plate' = standoff test-fit plate")
+    ap.add_argument("--only", choices=["base", "lid", "plate", "chassis"],
+                    help="write just one part; 'plate' = standoff test-fit plate, "
+                         "'chassis' = standoff plate + I/O shield in one piece")
     ap.add_argument("--out", default="out", help="output directory")
     a = ap.parse_args()
     if a.dc_jack_d:
@@ -362,6 +363,26 @@ def main():
                       [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
                        for p in MOUNT_HOLES_PX])
         parts["test_standoff_plate.stl"] = plate
+    if a.only in (None, "chassis"):
+        # standoff plate + I/O shield (right-edge wall with the port cut-outs, DC jack
+        # hole) in one piece, to build your own enclosure around.
+        # Origin = bottom-left corner of the board outline, +x along the board, +y up
+        # the photo, z up from the bottom of the plate.
+        mg2 = 3.0
+        shield = box(ix1, -mg2, 0, ox1, H + mg2, z_top)
+        for name, ya, yb, hh in RIGHT_PORTS_PX:
+            y_hi, y_lo = px(RIGHT_X, ya)[1] + m, px(RIGHT_X, yb)[1] - m
+            shield = shield.difference(
+                box(ix1 - 1, y_lo, z_pcb_bot, ox1 + 1, y_hi, z_pcb_top + hh + m), engine="manifold")
+        jhole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=ox1 - ix1 + 4, sections=48)
+        jhole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        jhole.apply_translation([(ix1 + ox1) / 2, px(RIGHT_X, DC_JACK["y_px"])[1],
+                                 z_pcb_top + DC_JACK["z_mm"]])
+        shield = shield.difference(jhole, engine="manifold")
+        chassis = union([box(-mg2, -mg2, 0, ox1, H + mg2, a.floor), shield] +
+                        [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, px(*p), z0=a.floor - 0.5)
+                         for p in MOUNT_HOLES_PX])
+        parts["standoff_plate_io_shield.stl"] = chassis
     if a.only in (None, "base"):
         parts["case_base.stl"] = body
     if a.only in (None, "lid"):
