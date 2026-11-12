@@ -206,8 +206,10 @@ def main():
     ap.add_argument("--comp-height", type=float, default=14.0,
                     help="tallest part above PCB (RAM slot, heatsink...) (mm)")
     ap.add_argument("--lid", type=float, default=2.4, help="lid plate thickness (mm)")
-    ap.add_argument("--hole-d", type=float, default=2.0,
-                    help="standoff pilot hole diameter (mm) (M2.5 self-tap ~2.0)")
+    ap.add_argument("--hole-d", type=float, default=2.4,
+                    help="standoff pilot hole diameter (mm). 2.4 = M2.5 screw tapping into "
+                         "printed plastic (FDM holes print ~0.2 small); use ~2.9 for a loose "
+                         "clearance fit, ~2.2 for a tighter bite")
     ap.add_argument("--standoff-d", type=float, default=6.0, help="standoff outer dia (mm)")
     ap.add_argument("--screw-d", type=float, default=3.2, help="lid screw clearance dia (mm)")
     ap.add_argument("--pilot-d", type=float, default=2.6, help="base ear pilot dia for M3 (mm)")
