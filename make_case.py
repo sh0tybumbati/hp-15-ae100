@@ -8,10 +8,11 @@ Outputs (binary STL, millimetres):
     case_lid.stl     lid with locating lip, vents over CPU/heatsink, screw holes
     board_ghost.stl  (optional, --ghost) stand-in for the PCB to check fit in a slicer
 
-SLIDE LAYOUT (default) - Air King "Skyscraper" radio style, three printed parts + 2 screws
+SLIDE LAYOUT (default) - rounded ziggurat tiers + chevron bands, three printed parts + 2 screws
     1. base_plate.stl  standoffs + power-button tab. Print flat as-is.
-    2. top_case.stl    ONE piece: ziggurat sides + back, flat front, slotted top. Already upside-down (top on bed).
-    3. io_shield.stl   the slatted front panel with the port cut-outs. Print as-is (slats up).
+    2. top_case.stl    ONE piece: rounded ziggurat sides + back, flat front, slotted top with engraved chevrons.
+                       Already upside-down (top on bed).
+    3. io_shield.stl   the front panel: half-round chevron bands + the port cut-outs. Print as-is (bands up).
     Assembly: mount the board on the plate standoffs (M2.5) -> slide plate + board into the top case from the
     front along the grooves until it stops at the back wall -> slide the shield up from below into its two vertical
     grooves (it stops under the top block) -> one M2.5 x 8-10 mm screw on each side of the shield face, into
@@ -257,6 +258,59 @@ def _band_along_y(y0, y1, x_wall, sgn, z0, z1, rb):
     return _hull(pts)
 
 
+def _smooth_stair(z_top, r_conv, r_conc, n_arc=9):
+    """STAIR polyline with every corner rounded (quadratic-Bezier fillets): convex step lips get r_conv,
+    inner corners r_conc. All turns are 45 deg, so nothing overhangs more than 45 deg when printed upside-down.
+    Returns an (n, 2) array of (outward offset, z) points, z strictly increasing."""
+    P = [tuple(map(float, p)) for p in STAIR] + [(0.0, float(z_top))]
+    pts = [P[0]]
+    for i in range(1, len(P) - 1):
+        a_, b_, c_ = (np.array(P[i - 1]), np.array(P[i]), np.array(P[i + 1]))
+        d1, d2 = (b_ - a_) / np.linalg.norm(b_ - a_), (c_ - b_) / np.linalg.norm(c_ - b_)
+        ang = float(np.arccos(np.clip(d1 @ d2, -1, 1)))
+        if ang < 1e-6:
+            pts.append(tuple(b_)); continue
+        R = r_conv if (d1[0] * d2[1] - d1[1] * d2[0]) > 0 else r_conc
+        t = min(R * np.tan(ang / 2), 0.45 * np.linalg.norm(b_ - a_), 0.45 * np.linalg.norm(c_ - b_))
+        S_, E_ = b_ - d1 * t, b_ + d2 * t
+        for u in np.linspace(0, 1, n_arc):
+            pts.append(tuple((1 - u) ** 2 * S_ + 2 * (1 - u) * u * b_ + u ** 2 * E_))
+    pts.append(P[-1])
+    return np.array(pts)
+
+
+def _arm_prism(p, q, width, z0, z1):
+    p, q = np.array(p, float), np.array(q, float)
+    u = (q - p) / np.linalg.norm(q - p)
+    n = np.array([-u[1], u[0]]) * width / 2
+    return _hull([(*(p + n), z0), (*(p - n), z0), (*(q + n), z0), (*(q - n), z0),
+                  (*(p + n), z1), (*(p - n), z1), (*(q + n), z1), (*(q - n), z1)])
+
+
+def chevron_top(ox0, oy0, ix1, oy1, H, z_top, keepouts, d=0.8, fw=1.6, pitch=7.0, s=0.55, margin=9.0):
+    """Engraved chevron grooves (V pointing towards the front, +x) across the top face."""
+    z0, z1 = z_top - d, z_top + 1
+    ym, L = H / 2, H / 2 + margin + 12
+    arms, xk = [], ox0 + margin
+    while xk <= ix1 - margin + s * L:
+        arms.append(_arm_prism((xk, ym), (xk - s * L, ym - L), fw, z0, z1))
+        arms.append(_arm_prism((xk, ym), (xk - s * L, ym + L), fw, z0, z1))
+        xk += pitch
+    cut = union(arms).intersection(box(ox0 + margin, oy0 + margin, z0 - 1, ix1 - margin, oy1 - margin, z1 + 1), engine="manifold")
+    for (x0_, y0_, x1_, y1_) in keepouts:
+        cut = cut.difference(box(x0_ - 3, y0_ - 3, z0 - 2, x1_ + 3, y1_ + 3, z1 + 2), engine="manifold")
+    return cut
+
+
+def _rod(p, q, r):
+    p, q = np.array(p, float), np.array(q, float)
+    L = float(np.linalg.norm(q - p))
+    cyl = creation.cylinder(radius=r, height=L, sections=24)
+    cyl.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], (q - p) / L))
+    cyl.apply_translation((p + q) / 2)
+    return cyl
+
+
 def _groove(x0, x1, y_back, y_in, sgn, gz0, gz1, flat=1.5):
     """Plate groove cutter. The ledge under the plate is chamfered at 45 deg beyond `flat` mm so the
     groove roof is self-supporting when the top case is printed upside-down."""
@@ -296,7 +350,7 @@ def build_slide(a, px, W, H, mount_pts):
     z_top = z_in + tc
     assert z_top > STAIR[-1][1] + 3, "raise --comp-height: the top block would vanish"
     zb_blk = STAIR[-1][1]                              # the top block starts here
-    z_ch_top = zb_blk - 0.2                            # shield grooves stop under the top block
+    z_ch_top = 24.0                                    # shield grooves stop here (the rounded stair is thick enough below)
     hdr_len, hdr_h = 8.0, 3.0
     m = 0.8
     gz0, gz1 = lift - 0.2, lift + fl + 0.2
@@ -304,7 +358,9 @@ def build_slide(a, px, W, H, mount_pts):
     def rect(os_, z):
         ob_ = os_ * STAIR_BACK
         return [(ox0 - ob_, oy0 - os_, z), (x_front, oy0 - os_, z), (x_front, oy1 + os_, z), (ox0 - ob_, oy1 + os_, z)]
-    frames = [rect(o, z) for o, z in STAIR] + [rect(0, z_top)]
+    prof = _smooth_stair(z_top, a.tier_radius, a.tier_radius * 0.8)
+    zs = np.append(np.arange(0.0, z_top - 1e-6, 0.5), z_top)
+    frames = [rect(float(o), float(z)) for o, z in zip(np.interp(zs, prof[:, 1], prof[:, 0]), zs)]
     solid = union([_hull(frames[i] + frames[i + 1]) for i in range(len(frames) - 1)])
     # cavity (open underneath), the shield slot with its two vertical grooves, and the front window
     cuts = [box(ix0, iy0, -1, ix1, iy1, z_in),
@@ -350,8 +406,11 @@ def build_slide(a, px, W, H, mount_pts):
             while x + slot_w <= vx1:
                 top = top.difference(box(x, vy0, z_in - 1, x + slot_w, vy1, z_top + 1), engine="manifold"); x += pitch
     if not a.no_deco:
-        top = top.difference(lid_deco(ox0, oy0, ix1, oy1, H, px, z_top, (hx0 - 4, oy0 + 12, hx1 + 4, oy1 - 12), frame_only=True),
-                             engine="manifold")
+        keep = []
+        for ax0, ay0, ax1, ay1, *_ in VENT_AREAS_PX:
+            (bx0, by0), (bx1, by1) = px(ax0, ay1), px(ax1, ay0)
+            keep.append((bx0, by0, bx1, by1))
+        top = top.difference(chevron_top(ox0, oy0, ix1, oy1, H, z_top, keep), engine="manifold")
     # one pilot hole per side in the header (the shield screws)
     z_scr = z_in + (tc - hdr_h) / 2
     y_scr = [iy0 + 8.0, iy1 - 8.0]
@@ -372,12 +431,20 @@ def build_slide(a, px, W, H, mount_pts):
     parts_s = [box(ix1, iy0 + 0.25, 0, x_out, iy1 - 0.25, z_top),                       # centre panel, flush with the top
                box(ix1, iy0 - chd + 0.25, 0, x_out, iy0 + 0.3, z_ch_top - 0.2),           # tabs that ride in the grooves
                box(ix1, iy1 - 0.3, 0, x_out, iy1 + chd - 0.25, z_ch_top - 0.2)]
-    if not a.no_deco:                                                                    # vertical slats, flush with the front plane
-        y = iy0 + 3.0
-        while y + RIB_W <= iy1 - 3.0:
-            if all(abs((y + RIB_W / 2) - ys) > 4.0 for ys in y_scr):
-                parts_s.append(box(x_out - 0.01, y, 0, x_front, y + RIB_W, z_top))
-            y += RIB_PITCH
+    if not a.no_deco:                                                                    # chevron bands (V pointing down)
+        ym, slope, pitch_z = (iy0 + iy1) / 2, 0.38, 7.5
+        Lh = (iy1 - iy0) / 2 + 6
+        rods, zk = [], -slope * Lh - pitch_z
+        while zk <= z_top + 1:
+            rods.append(_rod((x_out, ym, zk), (x_out, ym - Lh, zk + slope * Lh), x_front - x_out))
+            rods.append(_rod((x_out, ym, zk), (x_out, ym + Lh, zk + slope * Lh), x_front - x_out))
+            zk += pitch_z
+        bands = union(rods).intersection(box(ix1 + 0.2, iy0 + 3.0, 0, x_front + 0.01, iy1 - 3.0, z_top), engine="manifold")
+        for y_ in y_scr:        # keep the screw heads clear of the bands
+            kc = creation.cylinder(radius=4.5, height=8.0, sections=32)
+            kc.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+            kc.apply_translation([x_out, y_, z_scr]); bands = bands.difference(kc, engine="manifold")
+        parts_s.append(bands)
     shield = union(parts_s)
     for name, ya, yb, hh in RIGHT_PORTS_PX:
         y_hi, y_lo = px(RIGHT_X, ya)[1] + m, px(RIGHT_X, yb)[1] - m
@@ -436,6 +503,9 @@ def main():
                          "classic = single tray + lid")
     ap.add_argument("--lift", type=float, default=3.0, help="slide layout: gap under the plate (mm)")
     ap.add_argument("--ceiling", type=float, default=3.6, help="slide layout: top plate thickness (mm)")
+    ap.add_argument("--tier-radius", type=float, default=5.0,
+                    help="slide layout: rounding of the tier lips (mm); inner corners use 80%%. 0 = hard 45 deg steps. "
+                         "Keep it under ~6 or the 4 mm risers get swallowed")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
     ap.add_argument("--only", choices=["base", "lid", "plate", "chassis", "button", "slide"],
                     help="write just one part; 'plate' = standoff test-fit plate, "
