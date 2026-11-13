@@ -115,7 +115,7 @@ SWITCH = {
     "slot": 1.0,                    # gap cut around the tab
     "post_d": 4.0,                  # post diameter: bigger than the plunger so a ~1 mm
                                     # position error still hits it; the switch body is the stop
-    "sw_h": 3.0,                    # plunger tip height below the PCB underside (guess!)
+    "sw_h": 2.0,                    # plunger tip height below the PCB underside (guess; was 3.0, post made 1 mm taller)
     "gap": 0.4,                     # rest clearance post tip <-> plunger
 }
 
@@ -251,7 +251,7 @@ def main():
     ap.add_argument("--no-deco", action="store_true", help="plain case, no Art Deco styling")
     ap.add_argument("--no-button", action="store_true", help="omit the compliant power-button tab")
     ap.add_argument("--sw-height", type=float, default=None,
-                    help="height of the switch plunger tip below the PCB underside (mm) [3.0]")
+                    help="height of the switch plunger tip below the PCB underside (mm) [2.0]")
     ap.add_argument("--no-feet", action="store_true", help="omit the stick-on rubber foot recesses")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
     ap.add_argument("--only", choices=["base", "lid", "plate", "chassis", "button"],
