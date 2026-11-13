@@ -1,6 +1,7 @@
 import trimesh, numpy as np, sys
 from PIL import Image, ImageDraw
-def render(m, elev, azim, W=900, H=600, base=(80,130,210), zoom_center=None, zoom=1.0):
+def render(m, elev, azim, W=900, H=600, base=(80,130,210), zoom_center=None, zoom=1.0, fcolors=None):
+    """fcolors: optional (n_faces, 3) array of per-face base colours (for multi-part scenes)."""
     v=m.vertices.copy(); c=m.bounds.mean(0) if zoom_center is None else np.array(zoom_center)
     v-=c
     a=np.radians(azim); e=np.radians(elev)
@@ -15,7 +16,7 @@ def render(m, elev, azim, W=900, H=600, base=(80,130,210), zoom_center=None, zoo
     L=np.array([0.3,0.5,0.8]);L/=np.linalg.norm(L)
     sh=np.clip(n@L,0,1)*0.65+0.35
     zb=np.full((H,W),-1e9); img=np.full((H,W,3),255,np.uint8)
-    for f,shade,nz in zip(m.faces,sh,n[:,2]):
+    for fi,(f,shade,nz) in enumerate(zip(m.faces,sh,n[:,2])):
         if nz<=0: continue
         xs=sx[f];ys=sy[f];zs=sz[f]
         x0,x1=int(max(xs.min(),0)),int(min(xs.max()+1,W-1));y0,y1=int(max(ys.min(),0)),int(min(ys.max()+1,H-1))
@@ -30,7 +31,7 @@ def render(m, elev, azim, W=900, H=600, base=(80,130,210), zoom_center=None, zoo
         if not mk.any(): continue
         Z=l0*zs[0]+l1*zs[1]+l2*zs[2]
         sub=zb[y0:y1+1,x0:x1+1]; ok=mk&(Z>sub)
-        sub[ok]=Z[ok]; img[y0:y1+1,x0:x1+1][ok]=(np.array(base)*shade).astype(np.uint8)
+        sub[ok]=Z[ok]; img[y0:y1+1,x0:x1+1][ok]=(np.array(base if fcolors is None else fcolors[fi])*shade).astype(np.uint8)
     return Image.fromarray(img)
 if __name__=="__main__":
     out="model_preview.png"

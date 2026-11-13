@@ -8,6 +8,17 @@ Outputs (binary STL, millimetres):
     case_lid.stl     lid with locating lip, vents over CPU/heatsink, screw holes
     board_ghost.stl  (optional, --ghost) stand-in for the PCB to check fit in a slicer
 
+SLIDE LAYOUT (default) - four printed parts + screws
+    1. base_plate.stl  standoffs + power-button tab. Print flat as-is.
+    2. top_case.stl    lid + left/front/back walls. Printed upside-down (ceiling on the bed), already oriented.
+    3. io_shield.stl   I/O panel. Print flat as-is.
+    4. crown.stl       stepped Art Deco cap. Print flat as-is.
+    Assembly: screw the crown onto the ceiling from inside (4x M2.5, ~6 mm) -> mount the board on the plate
+    standoffs (M2.5) -> slide the plate + board into the top case from the I/O end along the grooves until it
+    stops at the left wall -> slide the I/O shield up into the open end (it stops against the catches) ->
+    3x M2.5 x 8-10 mm through the shield into the header under the ceiling.
+    Use `--layout classic` for the older single tray + lid.
+
 IMPORTANT - the feature positions below were measured off a product photo, not
 a drawing. Print the base only (--only base) as a quick test fit first and tweak
 BOARD_WIDTH_MM / the lists below with calipers.
@@ -222,6 +233,190 @@ def lid_deco(ox0, oy0, ox1, oy1, H, px, top, stepA):
     return union(cut)
 
 
+def _hull(points):
+    return trimesh.convex.convex_hull(np.asarray(points, float))
+
+
+def _band_along_x(x0, x1, y_wall, sgn, z0, z1, rb):
+    """Rail band on a side wall: rb proud of the wall, chamfered 45 deg on the ceiling side."""
+    pts = []
+    for x in (x0, x1):
+        pts += [(x, y_wall, z0), (x, y_wall + sgn * rb, z0), (x, y_wall + sgn * rb, z1 - rb), (x, y_wall, z1)]
+    return _hull(pts)
+
+
+def _band_along_y(y0, y1, x_wall, sgn, z0, z1, rb):
+    pts = []
+    for y in (y0, y1):
+        pts += [(x_wall, y, z0), (x_wall + sgn * rb, y, z0), (x_wall + sgn * rb, y, z1 - rb), (x_wall, y, z1)]
+    return _hull(pts)
+
+
+def _groove(x0, x1, y_back, y_in, sgn, gz0, gz1, flat=1.5):
+    """Plate groove cutter. The ledge under the plate is chamfered at 45 deg beyond `flat` mm so the
+    groove roof is self-supporting when the top case is printed upside-down."""
+    box_part = box(x0, min(y_back, y_in), gz0, x1, max(y_back, y_in), gz1)
+    yc = y_back + sgn * flat
+    drop = abs(y_in - yc)
+    wedge = _hull([(x, y, z) for x in (x0, x1) for (y, z) in [(yc, gz0), (y_in, gz0), (y_in, gz0 - drop)]])
+    return union([box_part, wedge])
+
+
+def build_slide(a, px, W, H, mount_pts):
+    """Sliding-tray layout. Returns ({name: mesh in print orientation}, assembled {name: mesh}, info).
+
+    base_plate  standoffs + button; slides in from the I/O end along grooves in the side walls
+    top_case    lid + left/front/back walls (+ header); printed upside-down (ceiling on the bed)
+    io_shield   slides up into the open I/O end in front of the plate, screwed into the header
+    crown       stepped Art Deco cap (printed flat), screwed onto the ceiling from inside
+    """
+    cl, tw = a.clearance, a.wall
+    ts, rb, eng = 2.4, 4.0, 3.0            # shield thickness, rail-band depth, plate engagement
+    lift, fl = a.lift, a.floor
+    ix0, iy0, ix1, iy1 = -cl, -cl, W + cl, H + cl
+    ox0, oy0, oy1 = ix0 - tw, iy0 - tw, iy1 + tw
+    x_end = ix1 + ts
+    z_p0, z_p1 = lift, lift + fl
+    z_pcb_bot = z_p1 + a.standoff
+    z_pcb_top = z_pcb_bot + a.pcb
+    z_in = z_pcb_top + a.comp_height       # ceiling underside
+    tc = a.ceiling
+    z_top = z_in + tc
+    hdr_len, hdr_h = 8.0, 3.0              # screw header under the ceiling at the I/O end
+    m = 0.8
+    zb0, zb1 = lift - 1.5, lift + 5.2      # rail band z-range
+    gz0, gz1 = lift - 0.2, lift + fl + 0.2 # groove z-range (0.2 clearance each side of the plate)
+    # ------------------------------------------------------------------ top case
+    parts = [box(ox0, oy0, 0, ix0, oy1, z_top),                  # left wall
+             box(ox0, oy0, 0, x_end, iy0, z_top),                # front wall
+             box(ox0, iy1, 0, x_end, oy1, z_top),                # back wall
+             box(ox0, oy0, z_in, ix1, oy1, z_top),               # ceiling
+             box(ix1 - hdr_len, iy0, z_in - hdr_h, ix1, iy1, z_in + 0.01),            # screw header
+             box(ix1, iy0, z_top - 2.0, x_end, iy0 + 1.2, z_top),                     # shield catches
+             box(ix1, iy1 - 1.2, z_top - 2.0, x_end, iy1, z_top)]
+    if not a.no_deco:
+        parts += [_band_along_x(ox0, x_end, oy0, -1, zb0, zb1, rb), _band_along_x(ox0, x_end, oy1, +1, zb0, zb1, rb),
+                  _band_along_y(oy0, oy1, ox0, -1, zb0, zb1, rb)]
+        for ysg, yw in ((-1, oy0), (+1, oy1)):                    # mitred corners at the left end
+            parts.append(_hull([(ox0, yw, zb0), (ox0 - rb, yw, zb0), (ox0, yw + ysg * rb, zb0), (ox0 - rb, yw + ysg * rb, zb0),
+                                (ox0, yw, zb1), (ox0 - rb, yw, zb1 - rb), (ox0, yw + ysg * rb, zb1 - rb),
+                                (ox0 - rb, yw + ysg * rb, zb1 - rb)]))
+        # vertical fluting above the rail band (stops short of the top)
+        right_skip = []
+        left_skip = [(px(LEFT_X, yb)[1] - 1.5, px(LEFT_X, ya)[1] + 1.5) for _, ya, yb, _ in LEFT_PORTS_PX]
+        back_skip = [(px(xa, TOP_Y)[0] - 1.5, px(xb, TOP_Y)[0] + 1.5) for _, xa, xb, _ in BACK_VENTS_PX]
+        jx = px(DC_JACK["x_px"], TOP_Y)[0]
+        back_skip.append((jx - DC_JACK["d_mm"] / 2 - 1.5, jx + DC_JACK["d_mm"] / 2 + 1.5))
+        hit = lambda v, spans: any(v + RIB_W > l_ and v < h_ for l_, h_ in spans)
+        zr0, zr1, lo = zb1, z_top - 2.0, 8.0
+        x = ox0 + lo
+        while x + RIB_W <= x_end - lo:
+            parts.append(box(x, oy0 - RIB_OUT, zr0, x + RIB_W, oy0 + 0.5, zr1))
+            if not hit(x, back_skip):
+                parts.append(box(x, oy1 - 0.5, zr0, x + RIB_W, oy1 + RIB_OUT, zr1))
+            x += RIB_PITCH
+        y = oy0 + lo
+        while y + RIB_W <= oy1 - lo:
+            if not hit(y, left_skip):
+                parts.append(box(ox0 - RIB_OUT, y, zr0, ox0 + 0.5, y + RIB_W, zr1))
+            y += RIB_PITCH
+    else:
+        parts += [box(ox0 - rb, oy0 - rb, zb0, ix0, oy0, zb1), box(ox0, oy1, zb0, x_end, oy1 + rb, zb1)]
+    top = union(parts)
+    # plate grooves (the plate edges ride in them; open at the I/O end)
+    top = top.difference(_groove(ix0, x_end + 1, iy0 - eng, iy0 + 0.5, +1, gz0, gz1), engine="manifold")
+    top = top.difference(_groove(ix0, x_end + 1, iy1 + eng, iy1 - 0.5, -1, gz0, gz1), engine="manifold")
+    # SATA opening in the left wall
+    for name, ya, yb, hh in LEFT_PORTS_PX:
+        y_hi, y_lo = px(LEFT_X, ya)[1] + m, px(LEFT_X, yb)[1] - m
+        top = top.difference(box(ox0 - 8, y_lo, z_pcb_bot, ix0 + 1, y_hi, min(z_pcb_top + hh + m, z_in - 1)), engine="manifold")
+    # fan exhaust slots + DC jack hole in the back wall
+    for name, xa, xb, hh in BACK_VENTS_PX:
+        slot_w, pitch = 3.5, 5.5
+        x0v, x1v = px(xa, TOP_Y)[0], px(xb, TOP_Y)[0]
+        x = x0v
+        while x + slot_w <= x1v:
+            top = top.difference(box(x, iy1 - 1, z_pcb_bot + 1.0, x + slot_w, oy1 + 8, min(z_pcb_top + hh, z_in - 1)), engine="manifold")
+            x += pitch
+    jhole = creation.cylinder(radius=DC_JACK["d_mm"] / 2, height=(oy1 + 8) - (iy1 - 1), sections=48)
+    jhole.apply_transform(transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    jhole.apply_translation([jx, (iy1 - 1 + oy1 + 8) / 2, z_pcb_top + DC_JACK["z_mm"]])
+    top = top.difference(jhole, engine="manifold")
+    # ceiling vents (the crown has matching slots)
+    hx0 = px(VENT_AREAS_PX[-1][0], VENT_AREAS_PX[-1][1])[0] - 2
+    hx1 = px(VENT_AREAS_PX[-1][2], VENT_AREAS_PX[-1][1])[0] + 2
+    cut = []
+    if not a.no_vents:
+        for ax0, ay0, ax1, ay1, slot_w, pitch in VENT_AREAS_PX:
+            vx0, vy0 = px(ax0, ay1); vx1, vy1 = px(ax1, ay0)
+            x = vx0
+            while x + slot_w <= vx1:
+                cut.append((x, vy0, x + slot_w, vy1)); x += pitch
+    for (x0_, y0_, x1_, y1_) in cut:
+        top = top.difference(box(x0_, y0_, z_in - 1, x1_, y1_, z_top + 1), engine="manifold")
+    # crown screw holes (through the ceiling) + header pilot holes for the shield screws
+    t2 = (ox0 + 7, oy0 + 7, ix1 - 7, oy1 - 7)
+    crown_scr = [(t2[0] + 6, t2[1] + 6), (t2[2] - 6, t2[1] + 6), (t2[0] + 6, t2[3] - 6), (t2[2] - 6, t2[3] - 6)]
+    for cx_, cy_ in crown_scr:
+        hole = creation.cylinder(radius=1.6, height=tc + 2, sections=32)
+        hole.apply_translation([cx_, cy_, z_in + tc / 2]); top = top.difference(hole, engine="manifold")
+    z_scr = z_in + (tc - hdr_h) / 2                       # centre of the header + ceiling end face
+    y_scr = [H * 0.12, H * 0.5, H * 0.88]
+    for y_ in y_scr:
+        pil = creation.cylinder(radius=a.pilot_d / 2 - 0.1, height=10.0, sections=32)
+        pil.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        pil.apply_translation([ix1 - 5.0 + 0.01, y_, z_scr]); top = top.difference(pil, engine="manifold")
+    # ------------------------------------------------------------------ base plate (local z = 0 at its underside)
+    plate = box(ix0 + 0.3, iy0 - (eng - 0.25), 0, ix1, iy1 + (eng - 0.25), fl)
+    extra = []
+    if not a.no_button:
+        c_, p_ = button_parts(SWITCH, fl, fl + a.standoff, ix1)
+        plate = plate.difference(c_, engine="manifold"); extra.append(p_)
+    plate = union([plate] + extra + [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=fl - 0.5)
+                                     for _, x, y in mount_pts])
+    # ------------------------------------------------------------------ I/O shield (assembled position)
+    sh_z1 = z_top - 2.0
+    shield = box(ix1, iy0 + 0.25, 0, x_end, iy1 - 0.25, sh_z1)
+    tongue = box(ix1, iy0 + 1.2 + 0.25, sh_z1 - 0.01, x_end, iy1 - 1.2 - 0.25, z_top)
+    shield = union([shield, tongue])
+    for name, ya, yb, hh in RIGHT_PORTS_PX:
+        y_hi, y_lo = px(RIGHT_X, ya)[1] + m, px(RIGHT_X, yb)[1] - m
+        shield = shield.difference(box(ix1 - 1, y_lo, z_pcb_bot, x_end + 1, y_hi,
+                                       min(z_pcb_top + hh + m, z_in - hdr_h - 0.5)), engine="manifold")
+    for y_ in y_scr:
+        hole = creation.cylinder(radius=1.45, height=ts + 2, sections=32)
+        hole.apply_transform(transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        hole.apply_translation([(ix1 + x_end) / 2, y_, z_scr]); shield = shield.difference(hole, engine="manifold")
+    # ------------------------------------------------------------------ crown (z = 0 at its flat underside)
+    cb = 4.0
+    crown_parts = [box(*t2[:2], 0, *t2[2:], cb)]
+    stepA = None
+    if not a.no_deco:
+        tiers = [(hx0 - 4, oy0 + 12, hx1 + 4, oy1 - 12), (hx0, oy0 + 17, hx1, oy1 - 17)]
+        stepA = tiers[0]; z = cb
+        for (x0_, y0_, x1_, y1_) in tiers:
+            crown_parts.append(box(x0_, y0_, z - 0.01, x1_, y1_, z + STEP)); z += STEP
+    crown_top = (cb + STEP * (0 if a.no_deco else 2))
+    crown = union(crown_parts)
+    for (x0_, y0_, x1_, y1_) in cut:
+        crown = crown.difference(box(x0_, y0_, -1, x1_, y1_, crown_top + 1), engine="manifold")
+    for cx_, cy_ in crown_scr:
+        pil = creation.cylinder(radius=a.pilot_d / 2 - 0.1, height=2.4 + 1, sections=32)
+        pil.apply_translation([cx_, cy_, (2.4 - 1) / 2]); crown = crown.difference(pil, engine="manifold")
+    if not a.no_deco:
+        crown = crown.difference(lid_deco(ox0, oy0, ix1, oy1, H, px, cb, stepA), engine="manifold")
+    # ------------------------------------------------------------------ orientations
+    top_p = top.copy(); top_p.apply_transform(np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, z_top], [0, 0, 0, 1.0]]))
+    sh_p = shield.copy(); sh_p.apply_transform(np.array([[0, 0, 1, 0], [0, 1, 0, 0], [-1, 0, 0, x_end], [0, 0, 0, 1.0]]))
+    asm = {"top_case": top, "base_plate": plate.copy(), "io_shield": shield, "crown": crown.copy()}
+    asm["base_plate"].apply_translation([0, 0, lift]); asm["crown"].apply_translation([0, 0, z_top])
+    info = dict(z_top=z_top, z_in=z_in, z_pcb_bot=z_pcb_bot, z_pcb_top=z_pcb_top, x_end=x_end, lift=lift)
+    return {"top_case.stl": top_p, "base_plate.stl": plate, "io_shield.stl": sh_p, "crown.stl": crown}, asm, info
+
+
+_LAST = {}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -236,8 +431,8 @@ def main():
     ap.add_argument("--floor", type=float, default=2.0, help="floor thickness (mm)")
     ap.add_argument("--standoff", type=float, default=6.0, help="standoff height (mm)")
     ap.add_argument("--pcb", type=float, default=1.2, help="PCB thickness (mm)")
-    ap.add_argument("--comp-height", type=float, default=14.0,
-                    help="tallest part above PCB (RAM slot, heatsink...) (mm)")
+    ap.add_argument("--comp-height", type=float, default=17.0,
+                    help="clearance above the PCB under the ceiling (mm); the I/O-end header hangs 3 mm of it")
     ap.add_argument("--lid", type=float, default=2.4, help="lid plate thickness (mm)")
     ap.add_argument("--hole-d", type=float, default=2.4,
                     help="standoff pilot hole diameter (mm). 2.4 = M2.5 screw tapping into "
@@ -252,9 +447,14 @@ def main():
     ap.add_argument("--no-button", action="store_true", help="omit the compliant power-button tab")
     ap.add_argument("--sw-height", type=float, default=None,
                     help="height of the switch plunger tip below the PCB underside (mm) [2.0]")
-    ap.add_argument("--no-feet", action="store_true", help="omit the stick-on rubber foot recesses")
+    ap.add_argument("--no-feet", action="store_true", help="omit the stick-on rubber foot recesses (classic layout)")
+    ap.add_argument("--layout", choices=["slide", "classic"], default="slide",
+                    help="slide = base plate slides into a top case + I/O shield + crown cap (default); "
+                         "classic = single tray + lid")
+    ap.add_argument("--lift", type=float, default=3.0, help="slide layout: gap under the plate (mm)")
+    ap.add_argument("--ceiling", type=float, default=3.6, help="slide layout: top plate thickness (mm)")
     ap.add_argument("--ghost", action="store_true", help="also write board_ghost.stl")
-    ap.add_argument("--only", choices=["base", "lid", "plate", "chassis", "button"],
+    ap.add_argument("--only", choices=["base", "lid", "plate", "chassis", "button", "slide"],
                     help="write just one part; 'plate' = standoff test-fit plate, "
                          "'chassis' = standoff plate + I/O shield in one piece, "
                          "'button' = small coupon to test the power-button alignment")
@@ -477,10 +677,14 @@ def main():
                         [tube(a.standoff_d / 2, a.hole_d / 2, a.standoff + 0.5, (x, y), z0=a.floor - 0.5)
                          for _, x, y in mount_points_mm(px)])
         parts["standoff_plate_io_shield.stl"] = chassis
-    if a.only in (None, "base"):
+    if a.layout == "classic" and a.only in (None, "base"):
         parts["case_base.stl"] = body
-    if a.only in (None, "lid"):
+    if a.layout == "classic" and a.only in (None, "lid"):
         parts["case_lid.stl"] = lid
+    if a.layout == "slide" and a.only in (None, "slide"):
+        slide_parts, slide_asm, slide_info = build_slide(a, px, W, H, mount_points_mm(px))
+        parts.update(slide_parts)
+        _LAST["slide"] = (slide_asm, slide_info)
     if a.ghost:
         g = [box(0, 0, z_pcb_bot, W, H, z_pcb_top)]
         for _, x, y in mount_points_mm(px):
